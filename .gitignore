@@ -1,0 +1,35 @@
+# ---- 构建产物 ----
+build/bin/
+# 仅仓库根的 dist/（scripts/build-windows.ps1 的发布目录），不能写成 dist/
+# 否则会连同 frontend/dist/ 一起被排除，.gitkeep 无法重新纳入。
+/dist/
+*.app/
+*.exe
+*.dmg
+*.zip
+
+# ---- 前端构建产物 ----
+# main.go 用 //go:embed all:frontend/dist，目录必须存在；
+# 因此只忽略内容、保留 .gitkeep（见 frontend/dist/.gitkeep）。
+frontend/dist/*
+!frontend/dist/.gitkeep
+
+# ---- 依赖 ----
+node_modules/
+
+# ---- Wails 生成的校验文件 ----
+frontend/package.json.md5
+
+# ---- 本地研究 / 逆向材料，不入库 ----
+.research/
+
+# ---- 本地规划文档（不随仓库发布） ----
+PLAN.md
+
+# ---- 系统杂物 ----
+.DS_Store
+
+# ---- 本地环境 ----
+.env
+.env.local
+*.log

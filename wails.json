@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "IPAGUI",
+  "outputfilename": "IPAGUI",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "shuanglin huang"
+  },
+  "info": {
+    "companyName": "ipagui contributors",
+    "productName": "IPA GUI",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 shuanglin huang",
+    "comments": "基于 ipatool 的 App Store IPA 下载器（third_party/ipatool 为 ipatool v2.8.0 的 MIT fork）"
+  }
+}

@@ -1,0 +1,17 @@
+# gitleaks 配置：使用默认规则集，仅排除两处「非真实凭据」的已知误报。
+#
+# 1. third_party/ipatool/pkg/http/authentication_test.go
+#    上游测试里显式构造的假响应头（"correlation-123"、"secret-cookie"），
+#    用于断言错误响应不会被带进错误信息，不是凭据。
+# 2. .research/
+#    本地研究材料，已被 .gitignore 排除，不进入版本库。
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "上游测试假值与不入库的本地研究材料"
+paths = [
+  '''third_party/ipatool/pkg/http/authentication_test\.go''',
+  '''\.research/''',
+]

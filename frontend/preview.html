@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+    <title>IPA GUI · preview</title>
+</head>
+<body>
+<div id="root"></div>
+<script>
+    // 只在浏览器里预览界面：伪造 Wails 注入的 window.go / window.runtime。
+    // 不进构建产物，也不是应用的运行路径（wails build 不会打包这个文件）。
+    // 图标用 1x1 的 data URI：这样断言的是「界面把 Apple 给的 artworkUrl 真的塞进了 img」，
+    // 而不是「无头 Chrome 能不能连上 mzstatic」。
+    const ARTWORK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFklEQVR42mPw7/kPR5dmKsERw9CSAADEfmzhqwtbXgAAAABJRU5ErkJggg==";
+    const apps = [
+        {id: 1, bundleId: "com.openai.chat", name: "ChatGPT", version: "1.2024.300", price: 0, free: true, platforms: ["iphone", "ipad"], artworkUrl: ARTWORK, updatedAt: "2024-09-18T07:00:00Z", fileSizeBytes: 73400320},
+        {id: 2, bundleId: "com.tencent.xin", name: "微信", version: "8.0.50", price: 0, free: true, platforms: ["iphone", "ipad"], artworkUrl: ARTWORK, updatedAt: "2026-09-29T01:36:22Z", fileSizeBytes: 967153664},
+        {id: 3, bundleId: "com.apple.Pages", name: "Pages", version: "14.1", price: 0, free: true, platforms: ["iphone", "ipad", "mac"], artworkUrl: ARTWORK, updatedAt: "2024-03-05T02:00:00Z"},
+        {id: 4, bundleId: "com.milan.pro", name: "某付费软件", version: "3.2.0", price: 45, free: false, platforms: ["iphone"], artworkUrl: ARTWORK, updatedAt: "2025-01-20T05:30:00Z", fileSizeBytes: 5242880},
+        {id: 5, bundleId: "com.milan.other", name: "没买过的付费软件", version: "9.9.9", price: 88, free: false, platforms: ["ipad"]},
+        {id: 6, bundleId: "com.milan.hidden", name: "只在 mac 上的软件", version: "2.0", price: 0, free: true, platforms: ["mac"], artworkUrl: ARTWORK, updatedAt: "2023-06-01T00:00:00Z"},
+    ];
+    const versions = {
+        "com.tencent.xin": {latestVersionId: "857109923", versionIdentifiers: ["857109923", "857101234", "857090011", "850000001"]},
+    };
+    // 账号的已购列表（购买历史）。apps[2]/apps[3] 的搜索响应里**没有** purchasedAt，
+    // 它们的「已购 · 时间」只能从这份列表来 —— 这正是真机上的形态。
+    const ownedApps = [
+        {...apps[2], purchasedAt: "2024-02-01T08:00:00Z"},
+        {...apps[3], purchasedAt: "2023-11-11T03:20:00Z"},
+        {id: 6754898359, bundleId: "xyz.wulonglin.PinToIsland", name: "Island Pocket", version: "9.8", price: 0,
+         free: true, purchasedAt: "2026-10-14T01:37:35Z", platforms: ["iphone", "ipad"], artworkUrl: ARTWORK,
+         fileSizeBytes: 64479232},
+        {id: 6760632308, bundleId: "com.ldc.ldclaw.cn", name: "雷电Claw", version: "1.0.1", price: 0, free: true,
+         purchasedAt: "2026-09-22T08:46:49Z", platforms: ["iphone"], fileSizeBytes: 24350720},
+    ];
+    const meta = {"857109923": "8.0.50", "857101234": "8.0.49", "857090011": "8.0.42"};
+    const library = [
+        {
+            id: 1, appId: 2, bundleId: "com.tencent.xin", name: "微信", version: "8.0.50", platform: "iphone",
+            path: "/Users/milan/Downloads/微信_8.0.50_hejinghao@changzhi.top.ipa", sizeBytes: 482344960,
+            sha256: "3f786850e387550fdab836ed7e6dc881de23001b", downloadedAt: "2026-10-15T09:12:00Z",
+            createdAt: "2026-10-15T09:12:00Z", updatedAt: "2026-10-15T09:12:00Z", exists: true,
+        },
+        {
+            id: 2, appId: 3, bundleId: "com.apple.Pages", name: "Pages", version: "857001122", platform: "mac",
+            path: "/Users/milan/Downloads/Pages_857001122_hejinghao@changzhi.top.ipa", sizeBytes: 0, sha256: "",
+            downloadedAt: "2026-10-14T22:03:00Z", createdAt: "2026-10-14T22:03:00Z", updatedAt: "2026-10-14T22:03:00Z",
+            exists: false, note: "文件已不在磁盘上",
+        },
+        {
+            // 文件在、但包里没有 iTunesArtwork（老包或非 App Store 来源的包）：界面必须退化成占位块，
+            // 而不是整行报错。
+            id: 3, appId: 4, bundleId: "com.milan.pro", name: "某付费软件", version: "3.2.0", platform: "iphone",
+            path: "/Users/milan/Downloads/某付费软件_3.2.0_hejinghao@changzhi.top.ipa", sizeBytes: 5242880,
+            sha256: "", downloadedAt: "2026-10-13T10:00:00Z",
+            createdAt: "2026-10-13T10:00:00Z", updatedAt: "2026-10-13T10:00:00Z", exists: true,
+        },
+    ];
+    let clickCount = 0;
+    const opened = [];
+    const retried = [];
+    const FREE_BYTES = 64 * 1024 * 1024 * 1024; // 64 GB，够装下桩里的批量体积
+    const tasks = [
+        {id: "demo-1", appId: 2, bundleId: "com.tencent.xin", name: "微信", platform: "iphone", versionId: "",
+         outputPath: "/Users/milan/Downloads/微信_latest_hejinghao@changzhi.top.ipa", state: "running",
+         bytesDone: 210763776, bytesTotal: 482344960, errorCode: "", errorMessage: "",
+         createdAt: "2026-10-16T17:20:00Z", updatedAt: "2026-10-16T17:20:05Z"},
+    ];
+    // 真事件总线（不是空转的 no-op）：界面里「下载中 / 已完成」这些状态全靠事件推进，
+    // 空转的 EventsOn 等于测不到。__emit 让脚本扮演后端广播。
+    const listeners = new Map();
+    const emit = (name, payload) => {
+        (listeners.get(name) || []).forEach((fn) => fn(payload));
+        return {name, payload, count: (listeners.get(name) || []).length};
+    };
+    window.__emit = emit;
+
+    window.runtime = {
+        EventsOn: (name, callback) => {
+            if (!listeners.has(name)) listeners.set(name, []);
+            listeners.get(name).push(callback);
+            return () => {
+                const list = listeners.get(name) || [];
+                const at = list.indexOf(callback);
+                if (at >= 0) list.splice(at, 1);
+            };
+        },
+        EventsOnMultiple: (name, callback) => {
+            if (!listeners.has(name)) listeners.set(name, []);
+            listeners.get(name).push(callback);
+            return () => {};
+        },
+        EventsOff: (name) => listeners.delete(name), EventsOffAll: () => {},
+        BrowserOpenURL: (url) => console.log("open", url),
+        ClipboardSetText: async () => true, ClipboardGetText: async () => "",
+        LogPrint: console.log, LogDebug: console.log, LogInfo: console.log,
+        LogWarning: console.log, LogError: console.log, LogTrace: console.log, LogFatal: console.log,
+        Quit: () => {},
+    };
+    // 预览里的登录态要可变：点「切换账号 / 退出登录」后 Status 必须真的变成未登录，
+    // 否则界面会看起来「点了没反应」。脚本仍然可以直接覆写 Status（见 08 用例）。
+    const previewAuth = {
+        loggedIn: true, email: "hejinghao@changzhi.top", name: "何静豪",
+        storeFront: "143524-2,34", message: "", loggedOut: false,
+    };
+    const previewLoggedOut = () => Object.assign(previewAuth, {
+        loggedIn: false, email: "", name: "", storeFront: "",
+        message: "已退出登录（本机凭据仍保留）", loggedOut: true, expired: false,
+    });
+    // 凭据过期：也是未登录，但原因是令牌失效（界面会显示红色提示、要求重新登录）。
+    const previewExpired = () => Object.assign(previewAuth, {
+        loggedIn: false, email: "", name: "", storeFront: "",
+        message: "登录凭据已过期，请重新登录", loggedOut: true, expired: true,
+    });
+    // 预览脚本会直接操作这些句柄（模拟换号/令牌过期前后的登录态），只存在于 preview.html。
+    window.__previewAuth = previewAuth;
+    window.__previewLogout = previewLoggedOut;
+    window.__previewExpire = previewExpired;
+    window.go = {
+        services: {
+            AuthService: {
+                Status: async () => previewAuth,
+                Login: async () => ({email: "hejinghao@changzhi.top", name: "何静豪", storeFront: "143524-2,34"}),
+                Logout: async () => previewLoggedOut(),
+                // 账号切换：与 Logout 同语义（清内存登录态 + 置登出标记），
+                // 返回退出后的状态，前端据此展开登录表单。
+                SwitchAccount: async () => previewLoggedOut(),
+                Revoke: async () => previewLoggedOut(),
+            },
+            EnvService: {
+                ClientReady: async () => {},
+                // 确认框现在是 Go 侧的原生对话框（macOS 上 window.confirm 恒返回 false），
+                // 预览里用一个可被脚本替换的钩子代替：默认「确定」，脚本可以换成返回 false
+                // 或顺便把文案记下来。
+                Confirm: async (title, message) => {
+                    const hook = window.__preview && window.__preview.confirm;
+                    if (typeof hook === "function") return Boolean(await hook(message, title));
+                    return true;
+                },
+                Info: async () => ({
+                    version: "0.1.0-dev", initialized: true,
+                    stateDir: "/Users/milan/Library/Application Support/ipatool",
+                    databasePath: "/Users/milan/Library/Application Support/ipagui/library.db",
+                    cacheDir: "/Users/milan/Library/Caches/ipatool",
+                    outputDir: "/Users/milan/Downloads", platform: "iphone",
+                }),
+            },
+            CatalogService: {
+                // 注意：Search 是位置参数（term, limit, platform），不是请求对象。
+                Search: async (term, limit, platform) => {
+                    const hit = apps.filter((a) => a.name.includes(term) || a.bundleId.includes(term));
+                    return {term, count: hit.length, apps: hit.slice(0, limit)};
+                },
+                ListVersions: async (appId, bundleId) => {
+                    const known = versions[bundleId];
+                    return {
+                        app: apps.find((a) => a.bundleId === bundleId) || ownedApps.find((a) => a.bundleId === bundleId),
+                        latestVersionId: (known || {}).latestVersionId || "100000001",
+                        versionIdentifiers: (known || {}).versionIdentifiers || ["100000001", "100000002"],
+                    };
+                },
+                GetVersionMetadata: async (appId, bundleId, versionId) => ({
+                    displayVersion: meta[versionId] || "未知", releaseDate: "2024-06-18T00:00:00Z",
+                }),
+                Lookup: async (appId, bundleId) =>
+                    apps.find((a) => a.id === appId) || apps.find((a) => a.bundleId === bundleId) || apps[1],
+                OpenInAppStore: async (appId) => {
+                    opened.push(appId);
+                },
+                // 位置参数 (platform, force)；后端一次给整份清单（缓存 + 后台刷新），前端不翻页。
+                ListAllPurchases: async (platform, force) => ({
+                    platform,
+                    totalCount: ownedApps.length,
+                    fetchedAt: new Date().toISOString(),
+                    cached: !force,
+                    refreshing: false,
+                    warning: "",
+                    apps: ownedApps,
+                }),
+                // 老的分页接口还在绑定里（MCP/CLI 用），界面不再调用它。
+                ListPurchases: async (page, limit) => {
+                    const start = Math.max(0, (page - 1) * limit);
+                    const slice = ownedApps.slice(start, start + limit);
+                    return {page, count: slice.length, totalCount: ownedApps.length, apps: slice};
+                },
+            },
+            LibraryService: {
+                List: async (filter) => {
+                    const query = filter.Query || filter.query || "";
+                    const platform = filter.Platform || filter.platform || "";
+                    return library.filter((entry) =>
+                        (!query || entry.bundleId.includes(query)) && (!platform || entry.platform === platform));
+                },
+                Hash: async (id) => "3f786850e387550fdab836ed7e6dc881de23001b",
+                // 真实实现是从磁盘上那个 IPA 里读 iTunesArtwork；这里只证明界面把它当 data URI 用。
+                Artwork: async (id) => (id === 1 ? ARTWORK : Promise.reject("no iTunesArtwork in this IPA")),
+                Delete: async () => {}, Reveal: async () => {},
+            },
+            DownloadService: {
+                // 真实 Start 会存任务、发 download:state 并起一个协程；这里只存任务 + 返回它，
+                // 界面要靠这个返回值立刻把「已开始」画出来 —— 那正是要验的东西。
+                Start: async (req) => {
+                    const app = apps.find((item) => item.id === req.appId) || {};
+                    const task = {
+                        id: "click-" + (clickCount += 1), appId: req.appId, bundleId: req.bundleId,
+                        name: app.name || req.bundleId, platform: req.platform, versionId: req.externalVersionId || "",
+                        // 与后端 ipa.DownloadFileName 一致：<App 名称>_<版本>_<账号>.ipa
+                        outputPath: "/Users/milan/Downloads/IPA/" + (app.name || req.bundleId) + "_" +
+                            (req.externalVersionId || "latest") +
+                            (previewAuth.email ? "_" + previewAuth.email : "") + ".ipa",
+                        state: "pending", bytesDone: 0, bytesTotal: 0, errorCode: "", errorMessage: "",
+                        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+                    };
+                    tasks.unshift(task);
+                    return task;
+                },
+                // 必须返回新数组：真实实现每次都是新的切片，而 React 收到同一个数组引用会
+                // 认为状态没变、直接不重渲染 —— 桩里返回同一个 tasks 会让「新增任务后列表刷新」测不到。
+                List: async () => [...tasks],
+                Cancel: async (id) => {
+                    const task = tasks.find((item) => item.id === id);
+                    if (task) task.state = "canceled";
+                    emit("download:state", {taskId: id, state: "canceled"});
+                },
+                Retry: async (id) => {
+                    const task = tasks.find((item) => item.id === id);
+                    // 后端的 Retry → SaveTask 是全量 upsert：状态回到 pending，旧的错误码/错误文本
+                    // 被一起覆盖成空串（名字则要显式带回去，见 internal/services/download.go 的 Retry）。
+                    if (task) {
+                        task.state = "pending";
+                        task.errorCode = "";
+                        task.errorMessage = "";
+                    }
+                    retried.push(id);
+                    emit("download:state", {taskId: id, state: "pending"});
+                    return task;
+                },
+                Remove: async () => {},
+                ResetPartial: async () => {}, PartialSize: async () => 1024, Reveal: async () => {},
+                FreeSpace: async () => FREE_BYTES,
+            },
+            SettingsService: {
+                Get: async () => ({
+                    outputDir: "/Users/milan/Downloads", platform: "iphone",
+                    acquireLicense: true, revealAfterDownload: false,
+                }),
+                Save: async () => {}, ChooseOutputDir: async () => "/Users/milan/Downloads",
+                PassphraseStatus: async () => ({
+                    systemStoreAvailable: true, hasPassphrase: false, expectedBackend: "keychain",
+                    pickedBackend: "keychain", matchesExpected: true, hint: "macOS 使用钥匙串，无需口令短语",
+                }),
+                SetPassphrase: async () => {}, ClearPassphrase: async () => {},
+            },
+        },
+    };
+
+    // 让预览脚本能扮演后端：推进进度、把任务改成完成/失败（真实实现里这些是 Go 侧广播）。
+    window.__preview = {
+        tasks,
+        emit,
+        // 真 Start / 真 confirm 各留一份：脚本里有几步会临时换掉它们，验完要能换回来。
+        start: window.go.services.DownloadService.Start,
+        // 确认框的默认行为（“确定”）。脚本可覆写它来扮演“取消”或收集文案。
+        confirm: () => true,
+        opened,
+        retried,
+        FREE_BYTES,
+        // 让脚本凭空塞一个失败任务（下载页的「重试全部失败」要有东西可重试）。
+        addTask(task) {
+            tasks.unshift(task);
+            return emit("download:state", {taskId: task.id, state: task.state});
+        },
+        setTask(id, patch) {
+            const task = tasks.find((item) => item.id === id);
+            if (task) Object.assign(task, patch);
+            return task;
+        },
+        finish(id, state, patch) {
+            this.setTask(id, Object.assign({state}, patch || {}));
+            return emit("download:state", {taskId: id, state});
+        },
+    };
+</script>
+<script src="./src/main.tsx" type="module"></script>
+</body>
+</html>
