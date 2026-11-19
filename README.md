@@ -1,5 +1,7 @@
 # IPA GUI
 
+**[English](#english)** · **[简体中文](#chinese)**
+
 A Wails desktop GUI for downloading IPAs of App Store apps **you already own**,
 built on top of [ipatool](https://github.com/majd/ipatool).
 
@@ -7,7 +9,12 @@ built on top of [ipatool](https://github.com/majd/ipatool).
 ![Go](https://img.shields.io/badge/go-1.26.5-00ADD8.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey.svg)
 
+<img src="docs/screenshots/search.png" width="860" alt="Search view">
+<img src="docs/screenshots/settings.png" width="860" alt="Settings view">
+
 ---
+
+<a id="english"></a>
 
 ## What it is
 
@@ -145,10 +152,11 @@ Please open an issue in this repository.
 
 ---
 
-<details>
-<summary>中文说明</summary>
+<a id="chinese"></a>
 
-### 这是什么
+## 简体中文
+
+**[English](#english)** · **简体中文**
 
 `ipagui` 是一个 Wails 桌面应用，把 [ipatool](https://github.com/majd/ipatool)
 的 Go 业务层（`pkg/appstore`）包成了图形界面，把「登录 → 搜索 → 版本考古 →
@@ -217,5 +225,3 @@ MIT。第三方归属与依赖许可说明见 [`NOTICE`](NOTICE)。
 ### 联系
 
 请在本仓库开 issue。
-
-</details>
