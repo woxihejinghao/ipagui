@@ -14,4 +14,6 @@ export function Lookup(arg1:number,arg2:string,arg3:string):Promise<ipa.AppView>
 
 export function OpenInAppStore(arg1:number):Promise<void>;
 
+export function Purchase(arg1:number,arg2:string,arg3:string):Promise<void>;
+
 export function Search(arg1:string,arg2:number,arg3:string):Promise<ipa.SearchResult>;

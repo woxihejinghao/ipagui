@@ -7,6 +7,7 @@ import (
 	gohttp "net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/majd/ipatool/v2/pkg/http"
 	"howett.net/plist"
@@ -17,6 +18,17 @@ const (
 	storefrontGenreURL      = "https://apps.apple.com/genre/id36"
 	maxStorefrontIDRange    = 1000
 )
+
+// 店面发现是搜索/登录/下载的共同前置，而它只是个只读的公共查询：苹果侧抖一下
+// （5xx / 429 / 连接被重置）就让「搜索」直接报错，看起来像功能坏了。这里给它
+// 几次快速重试 —— 用户不必自己去点第二次。
+const (
+	storefrontDiscoveryAttempts = 3
+	storefrontRetryDelay        = 300 * time.Millisecond
+)
+
+// storefrontRetrySleep 只为了测试里不真的等（生产就是 time.Sleep）。
+var storefrontRetrySleep = time.Sleep
 
 type availableStorefrontsResult struct {
 	Storefronts []availableStorefront `plist:"storefronts"`
@@ -239,22 +251,54 @@ func (t *appstore) discoverAvailableStorefronts() error {
 		return errors.New("storefront client is not configured")
 	}
 
+	var lastErr error
+
+	for attempt := 1; attempt <= storefrontDiscoveryAttempts; attempt++ {
+		if attempt > 1 {
+			storefrontRetrySleep(time.Duration(attempt-1) * storefrontRetryDelay)
+		}
+
+		countryCodes, retryable, err := t.fetchAvailableStorefronts()
+		if err == nil {
+			t.storefrontCountryCodes = countryCodes
+
+			return nil
+		}
+
+		lastErr = err
+
+		if !retryable {
+			break
+		}
+	}
+
+	return lastErr
+}
+
+// fetchAvailableStorefronts 取一次店面表；retryable 表示这次失败值得再试
+// （网络层错误 / 429 / 5xx）。4xx 是确定性的，重试只会浪费时间。
+func (t *appstore) fetchAvailableStorefronts() (map[string]string, bool, error) {
 	res, err := t.storefrontClient.Send(http.Request{
 		URL:            availableStorefrontsURL,
 		Method:         http.MethodGET,
 		ResponseFormat: http.ResponseFormatRaw,
 	})
 	if err != nil {
-		return fmt.Errorf("available storefronts request failed: %w", err)
+		return nil, true, fmt.Errorf("available storefronts request failed: %w", err)
 	}
 
 	if res.StatusCode != gohttp.StatusOK {
-		return NewErrorWithMetadata(errors.New("available storefronts request failed"), res)
+		// 状态码必须落在文本里：这层错误最终只会以字符串形式到达界面与日志，
+		// 没有它就只能看到「失败了」而不知道是 403 还是 503。
+		retryable := res.StatusCode == gohttp.StatusTooManyRequests || res.StatusCode >= gohttp.StatusInternalServerError
+
+		return nil, retryable, NewErrorWithMetadata(
+			fmt.Errorf("available storefronts request failed (HTTP %d)", res.StatusCode), res)
 	}
 
 	var result availableStorefrontsResult
 	if _, err = plist.Unmarshal(res.Data, &result); err != nil {
-		return fmt.Errorf("failed to decode available storefronts: %w", err)
+		return nil, false, fmt.Errorf("failed to decode available storefronts: %w", err)
 	}
 
 	countryCodes := make(map[string]string, len(result.Storefronts))
@@ -269,12 +313,10 @@ func (t *appstore) discoverAvailableStorefronts() error {
 	}
 
 	if len(countryCodes) == 0 {
-		return errors.New("available storefronts response contains no storefronts")
+		return nil, false, errors.New("available storefronts response contains no storefronts")
 	}
 
-	t.storefrontCountryCodes = countryCodes
-
-	return nil
+	return countryCodes, false, nil
 }
 
 func countryCodeFromStoreFront(storeFront string, countryCodes map[string]string) (string, error) {

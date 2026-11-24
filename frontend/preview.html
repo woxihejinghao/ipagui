@@ -60,6 +60,7 @@
     ];
     let clickCount = 0;
     const opened = [];
+    const purchased = [];
     const retried = [];
     const FREE_BYTES = 64 * 1024 * 1024 * 1024; // 64 GB，够装下桩里的批量体积
     const tasks = [
@@ -168,6 +169,20 @@
                     apps.find((a) => a.id === appId) || apps.find((a) => a.bundleId === bundleId) || apps[1],
                 OpenInAppStore: async (appId) => {
                     opened.push(appId);
+                },
+                // 购买（获取应用许可）：位置参数 (appId, bundleId, platform)。
+                // 真实上游只支持免费应用，所以付费的那些按 Apple 的说法报错 —— 弹窗里的
+                // 失败分支要能在这个预览里看到。
+                Purchase: async (appId, bundleId) => {
+                    const app = apps.find((a) => a.id === appId) || apps.find((a) => a.bundleId === bundleId);
+                    await new Promise((resolve) => setTimeout(resolve, 600));
+                    if (app && !app.free) {
+                        throw new Error(
+                            "这个应用需要付费，当前账号还没有购买记录。\n\n" +
+                                "上游的购买接口只支持免费应用 —— 请在 App Store 里用这个账号买过之后再回来下载。",
+                        );
+                    }
+                    purchased.push(appId);
                 },
                 // 位置参数 (platform, force)；后端一次给整份清单（缓存 + 后台刷新），前端不翻页。
                 ListAllPurchases: async (platform, force) => ({

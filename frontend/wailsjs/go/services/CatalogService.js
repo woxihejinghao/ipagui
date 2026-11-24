@@ -26,6 +26,10 @@ export function OpenInAppStore(arg1) {
   return window['go']['services']['CatalogService']['OpenInAppStore'](arg1);
 }
 
+export function Purchase(arg1, arg2, arg3) {
+  return window['go']['services']['CatalogService']['Purchase'](arg1, arg2, arg3);
+}
+
 export function Search(arg1, arg2, arg3) {
   return window['go']['services']['CatalogService']['Search'](arg1, arg2, arg3);
 }

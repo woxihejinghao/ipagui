@@ -50,6 +50,19 @@ func (s *CatalogService) GetVersionMetadata(appID int64, bundleID, versionID, pl
 	return s.runtime.Catalog().GetVersionMetadata(s.runtime.CallContext(), appID, bundleID, versionID, platform)
 }
 
+// Purchase 获取应用许可（把 App「买」进账号）。
+//
+// 上游的购买接口只支持免费应用：付费应用在这里会失败，错误文本已经由 ipa 层
+// 翻译成人话（见 errormap），前端拿到后直接展示并引导去 App Store —— 所以这个方法
+// 对付费应用不做拦截，让「失败原因」由 Apple 那边说话。
+func (s *CatalogService) Purchase(appID int64, bundleID, platform string) error {
+	if err := s.runtime.EnsureReady(); err != nil {
+		return err
+	}
+
+	return s.runtime.Catalog().Purchase(s.runtime.CallContext(), appID, bundleID, platform)
+}
+
 // ListPurchases 列出账号已购应用（page 从 1 开始，limit <= 0 用上游默认值）。
 //
 // 注意：上游每取一页都会把整份购买历史重拉一遍，界面**不要**用它翻页拼全量 ——

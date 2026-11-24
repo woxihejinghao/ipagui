@@ -163,13 +163,14 @@ async function main() {
                 },
             },
             {
-                name: "03 搜索结果行：「下载最新」+「版本」两个动作",
-                // 用户要求把历史版本入口做回搜索页：每行两个动作（下最新 / 看版本）。
+                name: "03 搜索结果行：「下载最新」+「购买」+「版本」三个动作",
+                // 用户要求把历史版本入口做回搜索页、并在下载旁边加购买：每行三个动作（下最新 / 购买 / 看版本）。
                 // 微信那行正在下，下载按钮该是状态而不是「下载最新」。
                 expect: [
                     '"rows":1',
-                    '"actions":[["下载中 43%","版本"]]',
+                    '"actions":[["下载中 43%","购买","版本"]]',
                     '"hasVersionButton":true',
+                    '"purchaseEnabled":true',
                 ],
                 async run() {
                     return await evaluate(`JSON.stringify({
@@ -178,7 +179,44 @@ async function main() {
                             [...tr.querySelectorAll("button")].map((b) => b.textContent.trim())),
                         hasVersionButton: [...document.querySelectorAll(".content table tbody tr button")]
                             .some((b) => b.textContent.includes("版本")),
+                        purchaseEnabled: [...document.querySelectorAll(".content table tbody tr button")]
+                            .some((b) => b.textContent.trim() === "购买" && !b.disabled),
                     })`);
+                },
+            },
+            {
+                name: "03b 购买弹窗：免费应用拿到许可，弹窗报结果",
+                // 点「购买」只把按钮换成「购买中…」，Apple 给了结果才弹窗 —— 这里等桩里的 600ms。
+                expect: ["购买结果 · 微信", "已获取许可", '"dialogOpen":true'],
+                async run() {
+                    const clicked = await evaluate(`(()=>{
+                        const tr = document.querySelector(".content table tbody tr");
+                        const b = tr && [...tr.querySelectorAll("button")].find((x) => x.textContent.trim() === "购买");
+                        if (!b) return "NOT FOUND";
+                        b.click();
+                        return "clicked";
+                    })()`);
+                    await sleep(1400);
+
+                    const snapshot = await evaluate(`JSON.stringify({
+                        clicked: ${JSON.stringify(clicked)},
+                        dialogOpen: Boolean(document.querySelector("dialog[open] #purchase-title")),
+                        title: (document.querySelector("dialog[open] #purchase-title") || {}).textContent || "",
+                        notice: (document.querySelector("dialog[open] .notice") || {}).innerText || "",
+                        buttons: [...document.querySelectorAll("dialog[open] .modal-actions button")]
+                            .map((b) => b.textContent.trim()),
+                    })`);
+
+                    // 关掉弹窗：下一步要接着用干净的搜索结果页（modal 会遮罩住整页）。
+                    // 标题与提示文本已经进了 snapshot，断言不靠「弹窗还开着」。
+                    // 弹窗本身也得有图：步骤截图是关闭之后拍的，看不到它。
+                    const shot = await client.send("Page.captureScreenshot", { format: "png" });
+                    writeFileSync(resolve(OUT, "03b-dialog.png"), Buffer.from(shot.data, "base64"));
+                    await evaluate(`(()=>{const b=[...document.querySelectorAll("dialog[open] .modal-actions button")]
+                        .find((x) => x.textContent.trim() === "关闭"); if (b) b.click(); return "closed";})()`);
+                    await sleep(300);
+
+                    return snapshot;
                 },
             },
             {
@@ -274,6 +312,8 @@ async function main() {
                     '"placeholders":1',
                     '"ownedBadge":1',
                     '"enabled":[true,false,true]',
+                    // 已购那行的「购买」该禁掉；未购的付费行不禁（点了才知道 Apple 怎么说）。
+                    '"purchase":[false,true,true]',
                 ],
                 async run() {
                     await type('input[placeholder^="应用名"]', "软件");
@@ -289,14 +329,53 @@ async function main() {
                                 .find((b) => b.textContent.includes("下载最新"));
                             return button ? !button.disabled : null;
                         });
+                        const purchase = rows.map((tr) => {
+                            const button = [...tr.querySelectorAll("button")]
+                                .find((b) => b.textContent.trim() === "购买");
+                            return button ? !button.disabled : null;
+                        });
                         return JSON.stringify({
                             icons: document.querySelectorAll('table img.icon').length,
                             placeholders: document.querySelectorAll('table .icon-placeholder').length,
                             ownedBadge: [...document.querySelectorAll("table .badge")]
                                 .filter((b) => b.textContent.trim() === "已购").length,
                             enabled,
+                            purchase,
                         });
                     })()`);
+                },
+            },
+            {
+                name: "05b 购买弹窗：付费应用买不了，给「去 App Store 购买」的出口",
+                // 上游购买接口只支持免费应用：失败弹窗要把 Apple 的说法原样显示，并给出下一步。
+                expect: ["购买结果 · 没买过的付费软件", "购买没成功", "上游的购买接口只支持免费应用", '"dialogOpen":true'],
+                async run() {
+                    const clicked = await evaluate(`(()=>{
+                        const row = [...document.querySelectorAll(".content table tbody tr")]
+                            .find((tr) => tr.innerText.includes("com.milan.other"));
+                        const b = row && [...row.querySelectorAll("button")].find((x) => x.textContent.trim() === "购买");
+                        if (!b) return "NOT FOUND";
+                        b.click();
+                        return "clicked";
+                    })()`);
+                    await sleep(1400);
+
+                    const snapshot = await evaluate(`JSON.stringify({
+                        clicked: ${JSON.stringify(clicked)},
+                        dialogOpen: Boolean(document.querySelector("dialog[open] #purchase-title")),
+                        title: (document.querySelector("dialog[open] #purchase-title") || {}).textContent || "",
+                        notice: (document.querySelector("dialog[open] .notice") || {}).innerText || "",
+                        buttons: [...document.querySelectorAll("dialog[open] .modal-actions button")]
+                            .map((b) => b.textContent.trim()),
+                    })`);
+
+                    const shot = await client.send("Page.captureScreenshot", { format: "png" });
+                    writeFileSync(resolve(OUT, "05b-dialog.png"), Buffer.from(shot.data, "base64"));
+                    await evaluate(`(()=>{const b=[...document.querySelectorAll("dialog[open] .modal-actions button")]
+                        .find((x) => x.textContent.trim() === "关闭"); if (b) b.click(); return "closed";})()`);
+                    await sleep(300);
+
+                    return snapshot;
                 },
             },
             {

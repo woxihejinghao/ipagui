@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/majd/ipatool/v2/pkg/http"
 	. "github.com/onsi/ginkgo/v2"
@@ -63,6 +64,13 @@ func storefrontPageFixture(items ...string) []byte {
 }
 
 var _ = Describe("App Store storefront data", func() {
+	// 发现失败要重试，但测试不应为此真的等几百毫秒。
+	BeforeEach(func() {
+		original := storefrontRetrySleep
+		storefrontRetrySleep = func(time.Duration) {}
+		DeferCleanup(func() { storefrontRetrySleep = original })
+	})
+
 	DescribeTable("resolves storefront response suffixes", func(storefront, country string) {
 		Expect(countryCodeFromStoreFront(storefront, testStorefrontCountryCodes())).To(Equal(country))
 	},
@@ -85,7 +93,7 @@ var _ = Describe("App Store storefront data", func() {
 			Expect(store.countryCodeFromStoreFront("143443")).To(Equal("DE"))
 		})
 
-		It("retries discovery after a request failure", func() {
+		It("retries a failed discovery request", func() {
 			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
 			store := &appstore{storefrontClient: client}
 			requestErr := errors.New("connection reset")
@@ -94,10 +102,37 @@ var _ = Describe("App Store storefront data", func() {
 				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
 			)
 
+			// 第一次请求被打断，内部自己再试一次就够了：用户不必为此再点一下搜索。
+			Expect(store.countryCodeFromStoreFront("143441-1,34")).To(Equal("US"))
+			Expect(store.countryCodeFromStoreFront("143443")).To(Equal("DE"))
+		})
+
+		It("does not cache a discovery failure", func() {
+			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
+			store := &appstore{storefrontClient: client}
+			requestErr := errors.New("connection reset")
+			gomock.InOrder(
+				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{}, requestErr).Times(storefrontDiscoveryAttempts),
+				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
+			)
+
 			_, err := store.countryCodeFromStoreFront("143441")
 			Expect(err).To(MatchError(ContainSubstring("available storefronts request failed")))
 			Expect(errors.Is(err, requestErr)).To(BeTrue())
+
+			// 重试用完仍失败：不能把「失败」缓存下来，下一次请求要重新去问苹果。
 			Expect(store.countryCodeFromStoreFront("143441")).To(Equal("US"))
+		})
+
+		It("does not retry a deterministic client error", func() {
+			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
+			store := &appstore{storefrontClient: client}
+			client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 403}, nil).Times(1)
+
+			_, err := store.countryCodeFromStoreFront("143441")
+
+			// 状态码要出现在文本里，否则只能看到「失败了」而不知道是 403 还是 503。
+			Expect(err).To(MatchError(ContainSubstring("available storefronts request failed (HTTP 403)")))
 		})
 
 		DescribeTable("resolves storefronts omitted from the available list", func(identifier, countryCode string) {
@@ -167,18 +202,19 @@ var _ = Describe("App Store storefront data", func() {
 			Expect(err).To(MatchError("country code mapping for store front (999999) was not found"))
 		})
 
-		DescribeTable("rejects unusable discovery responses", func(status int, body []byte, message string) {
+		DescribeTable("rejects unusable discovery responses", func(status int, body []byte, message string, attempts int) {
 			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
 			store := &appstore{storefrontClient: client}
-			client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: status, Data: body}, nil)
+			client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: status, Data: body}, nil).Times(attempts)
 
 			_, err := store.countryCodeFromStoreFront("143441")
 
 			Expect(err).To(MatchError(ContainSubstring(message)))
 		},
-			Entry("HTTP error", 503, nil, "available storefronts request failed"),
-			Entry("malformed plist", 200, []byte("not a plist"), "failed to decode available storefronts"),
-			Entry("empty storefront list", 200, []byte(`<plist><dict><key>storefronts</key><array/></dict></plist>`), "contains no storefronts"),
+			// 5xx 会被重试；解码/内容问题不重试（重试结果不会变）。
+			Entry("HTTP error", 503, nil, "available storefronts request failed (HTTP 503)", storefrontDiscoveryAttempts),
+			Entry("malformed plist", 200, []byte("not a plist"), "failed to decode available storefronts", 1),
+			Entry("empty storefront list", 200, []byte(`<plist><dict><key>storefronts</key><array/></dict></plist>`), "contains no storefronts", 1),
 		)
 	})
 

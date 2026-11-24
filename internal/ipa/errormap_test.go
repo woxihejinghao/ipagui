@@ -83,4 +83,17 @@ func TestErrormapMarkersStillExistInFork(t *testing.T) {
 	if !strings.Contains(string(data), markerStorefrontDiscovery) {
 		t.Errorf("%s 里找不到 %q：上游改了文案，errormap 的店面发现映射已失效", path, markerStorefrontDiscovery)
 	}
+
+	// 店面发现本体在 storefront.go（搜索、查找、登录共用），失败的文案在那边。
+	storefrontPath := filepath.Join("..", "..", "third_party", "ipatool", "pkg", "appstore", "storefront.go")
+
+	storefrontData, err := os.ReadFile(storefrontPath)
+	if err != nil {
+		t.Fatalf("读取 fork 的店面发现实现失败: %v", err)
+	}
+
+	if !strings.Contains(string(storefrontData), markerStorefrontUnavailable) {
+		t.Errorf("%s 里找不到 %q：文案变了，errormap 对「搜前置的店面发现失败」的映射已失效",
+			storefrontPath, markerStorefrontUnavailable)
+	}
 }

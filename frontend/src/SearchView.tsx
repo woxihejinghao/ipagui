@@ -134,6 +134,18 @@ type VersionPanel = {
     error: string;
 };
 
+/**
+ * 购买（获取应用许可）的结果面板。
+ *
+ * 只装「结果」：请求进行中时表格里的按钮自己显示「购买中…」，不弹阻塞窗口——
+ * 点下去就把人锁在弹窗里等 Apple 的说法，比等按钮转圈更难受。
+ */
+type PurchasePanel = {
+    app: ipa.AppView;
+    state: "done" | "failed";
+    message: string;
+};
+
 export default function SearchView({ notify, onOpenDownloads }: Props) {
     const [term, setTerm] = useState(snapshot.term);
     const [limit, setLimit] = useState(snapshot.limit);
@@ -154,6 +166,10 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
     // 历史版本面板（同时只开一个 App）：见 VersionPanel。
     const [versionPanel, setVersionPanel] = useState<VersionPanel | null>(null);
     const versionDialogRef = useRef<HTMLDialogElement>(null);
+    // 购买结果弹窗：见 PurchasePanel。purchasingID 表示哪一行正在请求许可。
+    const [purchasePanel, setPurchasePanel] = useState<PurchasePanel | null>(null);
+    const [purchasingID, setPurchasingID] = useState<number | null>(null);
+    const purchaseDialogRef = useRef<HTMLDialogElement>(null);
 
     const openDownloads = onOpenDownloads ?? (() => notify("下载页在顶部的「下载」标签里。", "info"));
 
@@ -489,6 +505,51 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
 
     const closeVersions = () => setVersionPanel(null);
 
+    // 购买结果弹窗同样要走 showModal（只加 open 属性没有焦锁与遮罩）。
+    useEffect(() => {
+        const dialog = purchaseDialogRef.current;
+        if (!dialog) {
+            return;
+        }
+        if (purchasePanel && !dialog.open) {
+            dialog.showModal();
+        }
+        if (!purchasePanel && dialog.open) {
+            dialog.close();
+        }
+    }, [purchasePanel]);
+
+    const closePurchase = () => setPurchasePanel(null);
+
+    /**
+     * 购买 = 向 Apple 请求这个应用的应用许可（免费应用直接入账）。
+     *
+     * 付费应用上游接口不支持，必然失败 —— 不在这里拦，把 Apple 的报错原样交给弹窗，
+     * 弹窗里再给「去 App Store 购买」的出口（见下面 purchasePanel 的渲染）。
+     */
+    const purchase = async (app: ipa.AppView) => {
+        if (purchasingID !== null) {
+            return;
+        }
+
+        setPurchasingID(app.id);
+        try {
+            await CatalogService.Purchase(app.id, app.bundleId, platform);
+            setPurchasePanel({
+                app,
+                state: "done",
+                message: `已为 ${app.name} 拿到应用许可，现在可以直接点「下载最新」。`,
+            });
+            notify(`已购买：${app.name}`, "info");
+            // 已购清单刚过期：强制重拉一份，「已购」标记与下载按钮才会跟着放开。
+            void loadOwnedIndex(platform, true);
+        } catch (reason) {
+            setPurchasePanel({ app, state: "failed", message: errText(reason) });
+        } finally {
+            setPurchasingID(null);
+        }
+    };
+
     /** 打开版本面板：版本标识列表秒回，显示版本号/发布时间在后台逐个补齐。 */
     const openVersions = async (app: ipa.AppView) => {
         setVersionPanel({
@@ -764,7 +825,7 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
                                     <th>Bundle ID</th>
                                     <th>版本 · 更新时间 / 体积</th>
                                     <th>价格</th>
-                                    <th style={{ width: 180 }}>操作</th>
+                                    <th style={{ width: 240 }}>操作</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -823,6 +884,22 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
                                                     onClick={() => void download(app)}
                                                 >
                                                     {downloadLabel(app, "下载最新")}
+                                                </button>
+                                                <button
+                                                    disabled={
+                                                        purchasingID !== null ||
+                                                        ownedState(owned, app, Boolean(owned)).owned === true
+                                                    }
+                                                    title={
+                                                        ownedState(owned, app, Boolean(owned)).owned === true
+                                                            ? "账号的已购列表里已经有它了，不用再买"
+                                                            : app.free
+                                                              ? "获取应用许可（免费应用，直接入账）"
+                                                              : "尝试购买：上游只支持免费应用，付费应用请用「去 App Store 购买」"
+                                                    }
+                                                    onClick={() => void purchase(app)}
+                                                >
+                                                    {purchasingID === app.id ? "购买中…" : "购买"}
                                                 </button>
                                                 <button
                                                     onClick={() => void openVersions(app)}
@@ -937,6 +1014,61 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
                             </table>
                         </>
                     )}
+                </dialog>
+            ) : null}
+
+            {purchasePanel ? (
+                <dialog
+                    ref={purchaseDialogRef}
+                    className="modal"
+                    aria-labelledby="purchase-title"
+                    onCancel={(event) => {
+                        event.preventDefault();
+                        closePurchase();
+                    }}
+                >
+                    <div className="modal-header">
+                        <div>
+                            <h3 id="purchase-title">购买结果 · {purchasePanel.app.name}</h3>
+                            <div className="muted mono">{purchasePanel.app.bundleId}</div>
+                        </div>
+                        <button className="icon-button" onClick={closePurchase} aria-label="关闭">
+                            ×
+                        </button>
+                    </div>
+
+                    {purchasePanel.state === "done" ? (
+                        <div className="notice good">
+                            <h4>已获取许可</h4>
+                            <div className="muted">{purchasePanel.message}</div>
+                        </div>
+                    ) : (
+                        <div className="notice bad">
+                            <h4>购买没成功</h4>
+                            <div className="muted" style={{ whiteSpace: "pre-wrap" }}>
+                                {purchasePanel.message}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="modal-actions">
+                        {purchasePanel.state === "done" ? (
+                            <button
+                                className="primary"
+                                onClick={() => {
+                                    const app = purchasePanel.app;
+                                    closePurchase();
+                                    void download(app);
+                                }}
+                            >
+                                下载最新
+                            </button>
+                        ) : null}
+                        {purchasePanel.state === "failed" && !purchasePanel.app.free ? (
+                            <button onClick={() => void openStore(purchasePanel.app)}>去 App Store 购买</button>
+                        ) : null}
+                        <button onClick={closePurchase}>关闭</button>
+                    </div>
                 </dialog>
             ) : null}
 

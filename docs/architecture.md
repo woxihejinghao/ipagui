@@ -192,6 +192,7 @@ StartDownload(req)
 | | `GetVersionMetadata(appID, bundleID, versionID, platform) → VersionMetadata` | 版本标识 → 显示版本 + 发布时间 |
 | | `ListPurchases(page, limit, platform) → OwnedAppsPage` | 账号的**已购清单**（Apple 的购买历史，`page` 从 1 起，上限 100/页）。搜索结果里的 `purchasedAt` 永远是空的 —— 已购判定只能靠它（§8.5） |
 | `CatalogService` | `OpenInAppStore(appID) → void` | 用 `macappstore://apps.apple.com/app/id<ID>` 把商店页拉起来（付费应用「先去买」最省事的入口），打不开则退回 https 链接 |
+| | `Purchase(appID, bundleID, platform) → void` | 向 Apple 要这个 App 的**应用许可**（免费应用直接入账）。上游的购买接口只支持免费应用，付费的必然失败 —— 所以不在这里拦，把 Apple 的报错交给搜索页的结果弹窗，并给「去 App Store 购买」的出口 |
 | `DownloadService` | `Start(req) → TaskID` | `req.OutputPath` 必须绝对路径；留空时文件名是 `<App 名称>_<显示版本号>.ipa`（指定历史版本时是 `<App 名称>_<版本标识>.ipa`）。名称取不到时退回 `<bundleId>`；两个不同 App 同名时后者追加 `-<appID>`（§8.19） |
 | | `List() → []Task` / `Cancel(id)` / `Retry(id)` / `Remove(id)` | |
 | | `RevealInFileManager(id)` | |
@@ -951,6 +952,7 @@ Notes_1.0_何静豪.ipa                        ← 账号没有 email 时用姓�
 - 资产缓存目录 `apple-assets-macos-27-26A434-arm64-v4` → `-v5`（v5 只是更小的 compact 表示）。已处理：确认上游会**复用已有 v4 缓存并迁移**（不重新下载），只有全新缓存才走网络；首次准备的磁盘峰值约 300 MB（解压中间产物 167 MB + 落盘 75 MB + 余量），网络量是恢复镜像里的相关区段、不是 14 GB 整包。新增 `internal/ipa/assets_cache.go`：`AssetCacheReady` 判定缓存是否就绪（只看 `apple-assets-*` 下有无非空文件，不硬编码版本号），`Session.Login` 前调 `EnsureAssetCacheSpace` 预检空间（不足直接报 `disk_full`，并说清要多少/剩多少）。护栏：`assets_cache_test.go`。
   同次修正了登录页的错误文案：原先写「要下载十几 GB 系统资产」——实际是从镜像里按区段读、磁盘峰值约 300 MB，已改成准确表述。
 - 登录店面从硬编码表改成 `availableStorefronts` 动态发现并缓存，手机号账号登录多一次请求，失败会让登录直接失败（`failed to discover storefronts: ...`）。已处理：映射为 `CodeTemporarilyUnavailable`（可重试，提示检查网络/代理）。
+- 店面发现是**搜索/查找/下载的共同前置**，所以它抖一下会让「搜索」直接报 `country code is invalid: available storefronts request failed`（用户实际遇到过，界面显示成「操作失败」）。已处理：fork 的 `discoverAvailableStorefronts` 对网络错误 / 429 / 5xx 做 3 次快速重试（每次失败后 300ms、600ms），4xx 不重试；失败文本带上状态码（`available storefronts request failed (HTTP 403)`），`errormap` 新增 `markerStorefrontUnavailable` → `CodeTemporarilyUnavailable`（中文提示 + 可重试）。fail 不缓存，下一次请求会重新去问 Apple。护栏：`errormap_test.go` 把 marker 钉在 fork 源码上。
 - 认证服务器返回 dialog 时错误文本变成 `消息: 解释 (Continue: https://...)`。已处理：`authDialogURLPattern` 提取 `*.apple.com` 链接，映射为新增的 `CodeActionRequired`，并优先于 `account is disabled` 等 marker（Apple 对话框文案里完全可能带这些句子）。护栏：`internal/ipa/errormap_test.go`（含「marker 文案仍在 fork 里」的上游侧断言）。
 - 新增 `sendDelistedDownload`（下架 App 恢复）在 ent 分支直接返回响应、不经过 sinf 判定。已处理：fork 的补丁扩展到这条路径（无 FairPlay 数据→按回退失败处理，错误为 `ent/download fallback returned no FairPlay data`），`TestForkRetainsSinfFallback` 改为断言两处调用（定义 1 + 主链路 1 + 下架恢复 1）。
 

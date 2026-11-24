@@ -83,7 +83,10 @@ const (
 	markerNoUsableAuth       = "apple returned no usable authentication response"
 	// v2.8.1 起登录会动态发现店面（availableStorefronts），失败时包成这句。
 	markerStorefrontDiscovery = "failed to discover storefronts"
-	markerVerificationFailed  = "apple did not complete verification"
+	// 搜索/查找/下载都要先把账号的 StoreFront 映射成国家码，这一步失败就是这句
+	// （店面对应表由 availableStoreFronts 接口提供，见 fork 的 storefront.go）。
+	markerStorefrontUnavailable = "available storefronts request failed"
+	markerVerificationFailed    = "apple did not complete verification"
 )
 
 // authDialogURLPattern 从上游认证弹窗错误里提取可信链接。
@@ -182,6 +185,13 @@ func MapError(err error) *AppError {
 	case strings.Contains(text, markerStorefrontDiscovery):
 		return appErr(CodeTemporarilyUnavailable, "无法获取 App Store 店面信息",
 			"登录时要向苹果查询账号所在区域，这一步失败了；请检查网络或代理后重试", true, err)
+
+	// 搜索/下载前的店面发现（同上一步，但发生在业务请求里）：一次抖动不该变成「操作失败」。
+	// 同一类错误里带 5xx 的已由上面的 transientHTTPStatus 接住，这里主要接 4xx 与网络错误。
+	case strings.Contains(text, markerStorefrontUnavailable):
+		return appErr(CodeTemporarilyUnavailable, "这次没能向 App Store 查到店面信息",
+			"搜索/下载前要先确认账号所在区域，这一步没成功；可能是网络或代理抖动，过几秒再试一次"+
+				"（若是付费/未登录相关，先确认账号状态正常）", true, err)
 
 	// 有可信链接就说明不是「失败」，而是需要用户去苹果页面处理（解锁账号、重置密码等）。
 	// 这条必须排在 marker 判据之前：Apple 的对话框文案里也可能带 "account is disabled" 之类的句子。
