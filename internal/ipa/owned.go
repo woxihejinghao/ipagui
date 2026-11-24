@@ -115,17 +115,23 @@ func (s *Services) ListAllOwnedApps(ctx context.Context, platform string, opts O
 		}
 	}
 
-	// 记下开始排队的时刻：如果等锁的这段时间里后台刷新刚好落地（缓存比这个时刻新），
-	// 那就不用再问一遍 Apple —— 用户想要的就是「更新之后的结果」。
-	waitStart := time.Now()
+	// 记下排队前的缓存代号：等锁的这段时间里如果有后台刷新落地（代号变了），
+	// 缓存已经是「更新之后的结果」，不用再问一遍 Apple。
+	//
+	// 这里刻意用代号而不是时间戳：Windows 上 time.Now() 的分辨率足够粗，排队前后
+	// 两次取值可能完全相同，于是「上一轮刚存进去的缓存」会被误判成「刚刷新完的
+	// 缓存」——用户的「刷新」会静默变成一个缓存命中（曾因此有 40% 概率的偶发失败）。
+	seqBefore := slot.sequence()
 
 	slot.fetchMu.Lock()
 	defer slot.fetchMu.Unlock()
 
-	if list, at, ok := slot.snapshot(key, account.Email); ok && !at.Before(waitStart) {
-		list.Cached = true
+	if slot.sequence() != seqBefore {
+		if list, _, ok := slot.snapshot(key, account.Email); ok {
+			list.Cached = true
 
-		return list, nil
+			return list, nil
+		}
 	}
 
 	list, err := s.fetchOwnedList(ctx, account, parsed)
@@ -456,6 +462,18 @@ type ownedSlot struct {
 	total      int
 	fetchedAt  time.Time
 	refreshing bool
+
+	// seq 在每次写入缓存时自增。它只用来回答一个问题：一个请求排队等锁期间，
+	// 缓存有没有被更新过（用时间戳回答会被 Windows 的时钟精度坑到）。
+	seq uint64
+}
+
+// sequence 返回当前缓存代号。
+func (slot *ownedSlot) sequence() uint64 {
+	slot.mu.Lock()
+	defer slot.mu.Unlock()
+
+	return slot.seq
 }
 
 // warmUp 第一次用到这个平台时把磁盘缓存读进内存（每个平台只读一次）。
@@ -483,6 +501,7 @@ func (slot *ownedSlot) warmUp(dir, platform, account string) {
 		slot.data = list.Apps
 		slot.total = list.TotalCount
 		slot.fetchedAt = at
+		slot.seq++
 	}
 }
 
@@ -512,6 +531,7 @@ func (slot *ownedSlot) update(platform, account string, list OwnedAppsList, at t
 	slot.data = list.Apps
 	slot.total = list.TotalCount
 	slot.fetchedAt = at
+	slot.seq++
 }
 
 func (slot *ownedSlot) beginRefresh() bool {
