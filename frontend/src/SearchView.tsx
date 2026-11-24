@@ -27,6 +27,24 @@ type Props = {
 };
 
 /**
+ * 切到「已购 / 下载 / 设置」时 App 会把这个组件卸载（`tab === "search" ? ... : null`），
+ * 所有 useState 跟着清空 —— 用户再切回来，输入框、条数、区域和搜索结果全没了，
+ * 只能把刚才搜的东西重打一遍。
+ *
+ * 所以把「用户亲手做过的选择」和结果本身留一份模块级快照。只存这四项：已购清单、
+ * 账本、下载任务都是派生数据，各有自己的拉取入口（挂载即重拉），存了反而会让
+ * 旧账号 / 旧平台的数据串到新界面上。
+ */
+type SearchSnapshot = {
+    term: string;
+    limit: number;
+    platform: string;
+    result: ipa.SearchResult | null;
+};
+
+const snapshot: SearchSnapshot = { term: "", limit: 10, platform: "iphone", result: null };
+
+/**
  * 把粘贴进来的东西认成 App：App Store 链接、纯数字的 App ID 都认。
  *
  * 为什么需要：付费应用得先去 App Store 买，用户手边最现成的东西就是商店链接；
@@ -117,14 +135,14 @@ type VersionPanel = {
 };
 
 export default function SearchView({ notify, onOpenDownloads }: Props) {
-    const [term, setTerm] = useState("");
-    const [limit, setLimit] = useState(10);
-    const [platform, setPlatform] = useState("iphone");
+    const [term, setTerm] = useState(snapshot.term);
+    const [limit, setLimit] = useState(snapshot.limit);
+    const [platform, setPlatform] = useState(snapshot.platform);
     const [busy, setBusy] = useState(false);
-    const [result, setResult] = useState<ipa.SearchResult | null>(null);
+    const [result, setResult] = useState<ipa.SearchResult | null>(snapshot.result);
 
     // 账号的已购清单：搜索结果里的「是否已购」以它为准（搜索接口不告诉我们）。
-    const [owned, setOwned] = useState<OwnedIndex | null>(() => peekOwned("iphone"));
+    const [owned, setOwned] = useState<OwnedIndex | null>(() => peekOwned(snapshot.platform));
     const [ownedError, setOwnedError] = useState("");
 
     // bundle id → 本地库里的那一条：结果列表上提前标「本地已有」。
@@ -250,8 +268,24 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
         }
     };
 
+    // 每次渲染后把快照刷成最新（不写依赖数组）：这样不管用户是先改了条件还是先拿到了
+    // 结果，卸载后再回来看到的都是最后一次的样子。
+    useEffect(() => {
+        snapshot.term = term;
+        snapshot.limit = limit;
+        snapshot.platform = platform;
+        snapshot.result = result;
+    });
+
     useEffect(() => {
         void loadTasks();
+
+        // 从快照恢复了一份旧结果时，账本和已购清单要重新对一遍：它们是随组件一起被卸掉的
+        // 派生数据，不重拉的话「本地已有 / 已购」标记会缺一块，而结果本身还挂在屏幕上。
+        if (snapshot.result) {
+            void loadLedger(platform);
+            void loadOwnedIndex(platform);
+        }
 
         const offProgress = EventsOn("download:progress", (payload: Progress) => {
             if (!payload || !payload.taskId) {
@@ -271,6 +305,13 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
         };
     }, []);
 
+    // 搜到结果先写快照再进 state：用户在「搜索中…」的时候切走，组件已经卸载，
+    // setResult 不会再渲染出新界面，但快照留住了结果 —— 回来还看得见。
+    const applyResult = (next: ipa.SearchResult | null) => {
+        snapshot.result = next;
+        setResult(next);
+    };
+
     const doSearch = async () => {
         if (!term.trim()) {
             return;
@@ -287,7 +328,7 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
                     target.kind === "id"
                         ? await CatalogService.Lookup(target.appID, "", platform)
                         : await CatalogService.Lookup(0, target.bundleID, platform);
-                setResult({
+                applyResult({
                     term: app.name || term.trim(),
                     count: 1,
                     apps: [app],
@@ -297,7 +338,7 @@ export default function SearchView({ notify, onOpenDownloads }: Props) {
                 return;
             }
 
-            setResult(normalizeSearchResult(await CatalogService.Search(term.trim(), limit, platform)));
+            applyResult(normalizeSearchResult(await CatalogService.Search(term.trim(), limit, platform)));
             // 有了结果才有「已购」要标，这时候才去问购买历史。
             void loadOwnedIndex(platform);
         } catch (reason) {

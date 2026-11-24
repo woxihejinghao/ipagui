@@ -155,8 +155,35 @@ export default function DownloadsView({ notify }: Props) {
         }
     };
 
+    /**
+     * 「移除」= 把任务从队列里删掉。
+     *
+     * 以前这里只删任务记录，磁盘上那份 .tmp 半成品原地不动：任务一没，界面上就再
+     * 也找不到能删它的入口，用户只能自己去下载目录翻。所以现在有半成品时把「删半成品」
+     * 并进这一步，一次问清楚。
+     */
     const remove = async (id: string) => {
         try {
+            const size = await DownloadService.PartialSize(id).catch(() => 0);
+            if (size > 0) {
+                const ok = await confirmDialog(
+                    `这个任务还留着半成品 ${humanBytes(size)}（.tmp）。\n\n` +
+                        "任务记录删掉之后，界面上就再也找不到它了，只能自己去下载目录手动删。\n\n" +
+                        `「确定」= 移除任务，并把这 ${humanBytes(size)} 一起删掉；「取消」= 什么都不动。`,
+                    "移除任务并删半成品",
+                );
+                if (!ok) {
+                    return;
+                }
+
+                await DownloadService.ResetPartial(id);
+                await DownloadService.Remove(id);
+                notify(`已移除任务，并释放 ${humanBytes(size)}`, "info");
+                await load();
+
+                return;
+            }
+
             await DownloadService.Remove(id);
             await load();
         } catch (reason) {
@@ -257,9 +284,17 @@ export default function DownloadsView({ notify }: Props) {
                                 </button>
                             </>
                         ) : null}
-                        <button className="danger" onClick={() => void remove(task.id)}>
-                            移除
-                        </button>
+                        {/* 运行中的任务不给「移除」：记录删了下载协程还在写文件，结束时
+                            又会把任务写回列表；要清就先把「取消」点了。 */}
+                        {task.state === "running" || task.state === "pending" ? null : (
+                            <button
+                                className="danger"
+                                onClick={() => void remove(task.id)}
+                                title="移除任务记录；磁盘上还有半成品时会问你要不要一起删"
+                            >
+                                移除
+                            </button>
+                        )}
                     </div>
                 </td>
             </tr>
