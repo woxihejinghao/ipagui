@@ -19,15 +19,15 @@ import (
 // pkg/ 内部符号。上游一个 patch 版本如果改了状态目录布局、错误文案或
 // 进度条用法，症状会是「登录态读不到」「错误提示变成一句英文」这类
 // 静默故障。把版本比对做成启动自检，就能把静默故障变成一条明确的失败。
-const ExpectedUpstreamVersion = "v2.8.0"
+const ExpectedUpstreamVersion = "v2.8.1"
 
 const (
-	// LocalForkVersion 是 v2.8.0 基线 + FairPlay sinf 修复的 fork 标记。
+	// LocalForkVersion 是 v2.8.1 基线 + FairPlay sinf 修复的 fork 标记。
 	//
 	// go.mod 通过本地 replace 指向 third_party/ipatool；Go 构建信息里只能
 	// 读到替换路径、读不到版本号，所以这里统一映射成这个固定值，避免把
 	// “按预期使用 fork”误判成“上游版本漂移”。
-	LocalForkVersion = "v2.8.0+sinf-fix"
+	LocalForkVersion = "v2.8.1+sinf-fix"
 
 	// localForkPathFragment 用来确认本地 replace 指向仓库内的 fork 副本，
 	// 而不是任意目录。
@@ -201,7 +201,7 @@ func evaluateUpstreamVersion(version string, found bool) (Check, string) {
 
 	detail := fmt.Sprintf("%s（与预期一致）", version)
 	if version == LocalForkVersion {
-		detail = fmt.Sprintf("%s（v2.8.0 基线 + FairPlay sinf 修复）", version)
+		detail = fmt.Sprintf("%s（v2.8.1 基线 + FairPlay sinf 修复）", version)
 	}
 
 	return Check{

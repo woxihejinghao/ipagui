@@ -114,6 +114,13 @@ func (s *Session) Login(email, password, authCode string) (Account, error) {
 		return Account{}, appErr(CodeInvalidCredentials, "请填写 Apple ID", "", false, nil)
 	}
 
+	// 首次登录会在用户缓存目录里准备 Apple 资产（解压峰值 + 落盘缓存约 300 MB）。
+	// 空间不足时上游报到 provisioning 中途（"no space left on device"），
+	// 这里提前拦下，把「要多少、现在剩多少」说清楚。
+	if err := EnsureAssetCacheSpace(); err != nil {
+		return Account{}, err
+	}
+
 	output, err := s.deps.Store.Login(appstore.LoginInput{
 		Email:    email,
 		Password: password,

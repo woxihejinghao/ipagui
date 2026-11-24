@@ -14,6 +14,6 @@
     "productName": "IPA GUI",
     "productVersion": "0.1.1",
     "copyright": "Copyright (c) 2026 shuanglin huang",
-    "comments": "基于 ipatool 的 App Store IPA 下载器（third_party/ipatool 为 ipatool v2.8.0 的 MIT fork）"
+    "comments": "基于 ipatool 的 App Store IPA 下载器（third_party/ipatool 为 ipatool v2.8.1 的 MIT fork）"
   }
 }

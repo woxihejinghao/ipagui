@@ -110,7 +110,7 @@ var assets embed.FS
 
 ## 与上游 ipatool 的关系
 
-`third_party/ipatool/` 是 [majd/ipatool](https://github.com/majd/ipatool) v2.8.0 的
+`third_party/ipatool/` 是 [majd/ipatool](https://github.com/majd/ipatool) v2.8.1 的
 修改副本，通过 Go 的 `replace` 指令接入：
 
 ```text
@@ -120,9 +120,9 @@ replace github.com/majd/ipatool/v2 => ./third_party/ipatool
 本地补丁记录在 [`third_party/ipatool/FORK.md`](third_party/ipatool/FORK.md)：
 
 1. FairPlay 回退 —— 避免产出「二进制已加密但没有有效 `sinf`」的 IPA；
-2. Apple CDN 的 `User-Agent` 修复（上游已有等价修复）。
+2. Apple FCS key 的 `User-Agent`（防御性；镜像下载的 UA 自 v2.8.1 起已由上游提供）。
 
-该目录还包含约 6.4 MB 的上游生成数据
+该目录还包含约 6.7 MB 的上游生成数据
 （`internal/store/profile/data_generated.go`）。它来自上游的钉版输入，不是本项目生成的 ——
 详见 `NOTICE`。
 

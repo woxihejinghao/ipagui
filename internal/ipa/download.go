@@ -159,10 +159,13 @@ func truncateRunes(value string, limit int) string {
 // Download 下载应用到指定路径，并通过 sink 推送结构化进度。
 //
 // 错误语义（重要，界面文案依赖它）：
-//   - 失败时**绝不移除** `<OutputPath>.tmp`，这是续传的基础；
+//   - 失败时**绝不移除** `<OutputPath>.tmp`（以及并行下载的 `.ipatool-parts` 目录），
+//     这是续传的基础；
 //   - 上游自己在两种情况下会删 .tmp：包平台校验失败，以及下载成功收尾时。
 //     所以「.tmp 还在」= 可以续传，「.tmp 消失且目标文件存在」= 已完成。
-//   - 因此「重新下载」这个动作必须由**调用方**先删除 .tmp，再重新调用（见 ResetPartial）。
+//   - 因此「重新下载」这个动作必须由**调用方**先删除半成品，再重新调用（见 ResetPartial）。
+//   - 每次下载开始前会清掉崩溃残留的 `.ipatool-parts`：上游用 os.Mkdir 建它，
+//     目录已存在会让本次下载直接失败。
 func (s *Services) Download(ctx context.Context, req DownloadRequest, sink ProgressSink) (DownloadResult, error) {
 	if req.OutputPath == "" {
 		return DownloadResult{}, appErr(CodeUnknown, "缺少输出路径",
@@ -204,6 +207,9 @@ func (s *Services) Download(ctx context.Context, req DownloadRequest, sink Progr
 	}
 
 	tmpPath := req.OutputPath + ".tmp"
+
+	// 上一次进程崩溃可能留下并行下载的分片目录，上游 os.Mkdir 会因此直接失败。
+	removeStaleParts(tmpPath)
 
 	result := DownloadResult{DestinationPath: req.OutputPath, TmpPath: tmpPath}
 	if size, ok := PartialSize(tmpPath); ok {
@@ -305,26 +311,82 @@ func (s *Services) purchaseLocked(account appstore.Account, app appstore.App, pl
 	return nil
 }
 
-// PartialSize 返回续传分片的大小；不存在时返回 (0, false)。
+// PartialSize 返回续传分片的总大小（.tmp 文件 + 并行下载暂存目录）；都不存在时返回 (0, false)。
+//
+// 上游 v2.8.1 起，超过 128 MB 的包会走 4 路 Range 并行下载，分片写在
+// `<tmp>.ipatool-parts/` 目录里（见 partialPartsSuffix）。只统计 .tmp 会把
+// 「已经下了几百 MB」显示成「半成品 0 B」，所以两处都要算。
 func PartialSize(tmpPath string) (int64, bool) {
-	info, err := os.Stat(tmpPath)
-	if err != nil || info.IsDir() {
+	var total int64
+
+	found := false
+
+	if info, err := os.Stat(tmpPath); err == nil && !info.IsDir() {
+		total += info.Size()
+
+		found = true
+	}
+
+	if size, ok := partsSize(tmpPath + partialPartsSuffix); ok {
+		total += size
+
+		found = true
+	}
+
+	return total, found
+}
+
+// partsSize 统计并行下载暂存目录里所有分片的大小；目录不存在时返回 (0, false)。
+func partsSize(directory string) (int64, bool) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
 		return 0, false
 	}
 
-	return info.Size(), true
+	var total int64
+
+	for _, entry := range entries {
+		info, infoErr := entry.Info()
+		if infoErr != nil || info.IsDir() {
+			continue
+		}
+
+		total += info.Size()
+	}
+
+	return total, true
 }
 
-// ResetPartial 删除续传分片，让下一次下载从头开始。
+// ResetPartial 删除续传分片与并行下载暂存目录，让下一次下载从头开始。
 //
-// 只有用户明确选择「重新下载」时才调用它。任何自动流程都不该删 .tmp。
+// 只有用户明确选择「重新下载」时才调用它。任何自动流程都不该删半成品。
 func ResetPartial(destinationPath string) error {
 	err := os.Remove(destinationPath + ".tmp")
 	if err != nil && !os.IsNotExist(err) {
 		return MapError(err)
 	}
 
+	// 暂存目录是目录不是文件，Remove 会报 ENOTEMPTY；用 RemoveAll，
+	// 且删不掉不阻断——上游下一次下载仍会自己尝试重建它的分片。
+	_ = os.RemoveAll(destinationPath + ".tmp" + partialPartsSuffix)
+
 	return nil
+}
+
+// partialPartsSuffix 是上游并行下载（v2.8.1 起）的暂存目录后缀。
+//
+// 上游在 `<目标>.tmp` 之外再建 `<目标>.tmp.ipatool-parts/`，把 4 路 Range 的分片
+// 写进去，正常结束（成功 / 失败 / 取消）时自己删掉；只有进程被强杀或崩溃才会残留。
+// 残留是硬故障：上游用 os.Mkdir 建这个目录，已存在就直接让本次下载失败，
+// 所以 Download 开始前必须清一次（见 removeStaleParts）。
+const partialPartsSuffix = ".ipatool-parts"
+
+// removeStaleParts 清掉上一次崩溃残留的并行下载暂存目录。
+//
+// 删除失败不做处理：那属于权限/磁盘问题，交给上游随后的报错给出更具体的上下文。
+// 同一时刻只有一次下载在跑（DownloadService 的 sem 容量为 1），不存在误删在用的分片。
+func removeStaleParts(tmpPath string) {
+	_ = os.RemoveAll(tmpPath + partialPartsSuffix)
 }
 
 // ReplicateSinf 把一个已下载的包按 sinf 重写（上游的 ReplicateSinf）。

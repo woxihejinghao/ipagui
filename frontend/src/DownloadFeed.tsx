@@ -130,7 +130,7 @@ export default function DownloadFeed({ tasks, progress, onCancel, onReveal, onOp
                         ) : null}
 
                         {task.state === "canceled" ? (
-                            <div className="muted">已取消（半成品 .tmp 保留，可在下载页续传）。</div>
+                            <div className="muted">已取消（半成品保留，可在下载页续传）。</div>
                         ) : null}
                     </div>
                 );

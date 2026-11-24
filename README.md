@@ -120,7 +120,7 @@ Known risks, stated plainly:
 ## Relation to upstream ipatool
 
 `third_party/ipatool/` is a modified copy of
-[majd/ipatool](https://github.com/majd/ipatool) v2.8.0, wired in via a Go
+[majd/ipatool](https://github.com/majd/ipatool) v2.8.1, wired in via a Go
 `replace` directive:
 
 ```text
@@ -132,9 +132,10 @@ Local patches are documented in
 
 1. a FairPlay fallback so a download never produces an IPA whose binary is
    encrypted but carries no valid `sinf`;
-2. an Apple CDN `User-Agent` fix (upstream now has an equivalent fix).
+2. an Apple FCS key `User-Agent` header (defensive; the restore-image
+   `User-Agent` itself ships upstream since v2.8.1).
 
-The directory contains ~6.4 MB of upstream-generated asset data
+The directory contains ~6.7 MB of upstream-generated asset data
 (`internal/store/profile/data_generated.go`). It comes from upstream's pinned
 inputs, not from this project — see `NOTICE`.
 

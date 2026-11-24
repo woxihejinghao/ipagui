@@ -218,7 +218,7 @@ func (s *DownloadService) execute(ctx context.Context, taskID string, req ipa.Do
 	case ctx.Err() != nil:
 		task.State = store.TaskCanceled
 		task.ErrorCode = "canceled"
-		task.ErrorMessage = "已取消（半成品 .tmp 保留，可续传）"
+		task.ErrorMessage = "已取消（半成品保留，可续传）"
 		s.persistAndEmit(task, task.ErrorMessage)
 
 		return
@@ -425,7 +425,7 @@ func (s *DownloadService) List() ([]store.Task, error) {
 	return s.runtime.Library().ListTasks(s.runtime.CallContext())
 }
 
-// Cancel 取消一条排队中或正在下载的任务。半成品 .tmp 会保留。
+// Cancel 取消一条排队中或正在下载的任务。半成品（.tmp 与并行分片）会保留。
 func (s *DownloadService) Cancel(id string) error {
 	s.mu.Lock()
 	cancel, ok := s.cancels[id]
@@ -546,7 +546,7 @@ func (s *DownloadService) FreeSpace() (int64, error) {
 	return ipa.FreeSpace(directory)
 }
 
-// ResetPartial 删除半成品 .tmp，让下一次下载从头开始。
+// ResetPartial 删除半成品（.tmp 与并行下载的 .ipatool-parts 目录），让下一次下载从头开始。
 func (s *DownloadService) ResetPartial(id string) error {
 	if err := s.runtime.EnsureReady(); err != nil {
 		return err

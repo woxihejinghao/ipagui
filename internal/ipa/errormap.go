@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"syscall"
 
@@ -34,6 +35,7 @@ const (
 	CodeDiskFull               Code = "disk_full"
 	CodePermission             Code = "permission"
 	CodeCanceled               Code = "canceled"
+	CodeActionRequired         Code = "action_required"
 	CodeUnknown                Code = "unknown"
 )
 
@@ -78,7 +80,19 @@ const (
 	markerLicenseNotFound    = "License not found"
 	markerPaidAppUnsupported = "purchasing paid apps is not supported"
 	markerNoUsableAuth       = "apple returned no usable authentication response"
+	// v2.8.1 起登录会动态发现店面（availableStorefronts），失败时包成这句。
+	markerStorefrontDiscovery = "failed to discover storefronts"
 )
+
+// authDialogURLPattern 从上游认证弹窗错误里提取可信链接。
+//
+// v2.8.1 起 Apple 返回对话框时，错误文本形如：
+//
+//	This Apple ID has been locked for security reasons: ... (Continue: https://iforgot.apple.com/...)
+//
+// 上游只把 OK 按钮的 OpenURL 嵌进文本（且已校验必须是 https + *.apple.com），
+// 这里再把 URL 抽出来给用户点。
+var authDialogURLPattern = regexp.MustCompile(`https://[^\s()]*apple\.com[^\s()]*`)
 
 // MapError 是唯一的错误翻译入口：所有对外 API 的错误都必须经过它。
 func MapError(err error) *AppError {
@@ -163,6 +177,16 @@ func MapError(err error) *AppError {
 	}
 
 	switch {
+	case strings.Contains(text, markerStorefrontDiscovery):
+		return appErr(CodeTemporarilyUnavailable, "无法获取 App Store 店面信息",
+			"登录时要向苹果查询账号所在区域，这一步失败了；请检查网络或代理后重试", true, err)
+
+	// 有可信链接就说明不是「失败」，而是需要用户去苹果页面处理（解锁账号、重置密码等）。
+	// 这条必须排在 marker 判据之前：Apple 的对话框文案里也可能带 "account is disabled" 之类的句子。
+	case authDialogURLPattern.MatchString(text):
+		return appErr(CodeActionRequired, "Apple 要求在继续前先处理一个问题",
+			"请在浏览器打开："+authDialogURLPattern.FindString(text)+"，处理完再回来重试", false, err)
+
 	case strings.Contains(text, markerKeyringNotFound):
 		return appErr(CodeNotLoggedIn, "尚未登录", "请先登录 Apple ID", false, err)
 

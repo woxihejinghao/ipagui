@@ -360,8 +360,8 @@ export default function AccountSection({ env, auth, refresh, notify }: Props) {
                                     <div />
                                 </div>
                                 <div className="row muted" style={{ marginTop: 8 }}>
-                                    要从 Apple 下载十几 GB 系统资产，视网络可能十几分钟，请勿关闭窗口；
-                                    失败会从头下载。缓存位置：{" "}
+                                    要从 Apple 按需读取 macOS 27 系统资产（不是整包镜像，磁盘上约占 300 MB），
+                                    视网络可能几十秒到几分钟，请勿关闭窗口；失败可重试。缓存位置：{" "}
                                     <span className="mono">
                                         {env?.cacheDir ? `${env.cacheDir}/ipatool/sap/` : "<用户缓存目录>/ipatool/sap/"}
                                     </span>
@@ -370,7 +370,7 @@ export default function AccountSection({ env, auth, refresh, notify }: Props) {
                         ) : null}
                         {busy ? null : (
                             <div className="row muted">
-                                首次登录要下载 macOS 27 系统资产（十几 GB），会比较慢，之后走缓存。
+                                首次登录要准备 macOS 27 系统资产（约 300 MB 磁盘，之后走缓存），时间取决于网络。
                                 需要验证时会弹出验证码输入框。
                             </div>
                         )}

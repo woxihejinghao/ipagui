@@ -30,7 +30,7 @@ func newTestDeps(t *testing.T) *Deps {
 // TestPreflight 断言启动自检在干净环境下通过。
 //
 // 这条测试真正的价值在于：它会在「上游漂移」时变红。
-// 例如有人把 go.mod 里的 ipatool 升到 v2.8.0，upstream_version 检查会失败；
+// 例如有人把 go.mod 里的 ipatool 升到 v2.8.2，upstream_version 检查会失败；
 // 又例如在 macOS 上用 CGO_ENABLED=0 跑测试，credential_backend 会失败。
 func TestPreflight(t *testing.T) {
 	deps := newTestDeps(t)
@@ -118,10 +118,40 @@ func TestGoModPinsUpstreamDependencies(t *testing.T) {
 		}
 	}
 
-	// GUI 实际链接的是 third_party 里的 fork（v2.8.0 + FairPlay sinf 修复），
+	// GUI 实际链接的是 third_party 里的 fork（v2.8.1 + FairPlay sinf 修复），
 	// 不是上游模块。replace 丢了就会静默退回上游代码，下载缺 sinf 的问题会复发。
 	if !strings.Contains(content, "github.com/majd/ipatool/v2 => ./third_party/ipatool") {
-		t.Errorf("go.mod 必须把 ipatool replace 到 ./third_party/ipatool（v2.8.0 + sinf 修复）")
+		t.Errorf("go.mod 必须把 ipatool replace 到 ./third_party/ipatool（v2.8.1 + sinf 修复）")
+	}
+}
+
+// TestForkRetainsSinfFallback 盯第四件事：fork 里的 FairPlay 回退不能丢。
+//
+// 升上游时最容易犯的错是“整个覆盖 third_party”，然后把 replace 留着的旧代码
+// 当成已经带了补丁。缺失的表现是静默的：能下到包，但包里的二进制没 sinf，
+// 在未授权设备上装完打不开。这里按符号判，不按文件哈希判（上游上下文会变）。
+func TestForkRetainsSinfFallback(t *testing.T) {
+	path := filepath.Join("..", "..", "third_party", "ipatool", "pkg", "appstore", "appstore_download_product.go")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 fork 的下载实现失败: %v", err)
+	}
+
+	content := string(data)
+
+	if !strings.Contains(content, "hasDownloadFairPlayData") {
+		t.Errorf("%s 里缺少 hasDownloadFairPlayData（FairPlay 回退补丁丢了，重新按 FORK.md 重放）", path)
+	}
+
+	if !strings.Contains(content, "err == nil && hasDownloadFairPlayData(res)") {
+		t.Errorf("%s 里 ent/download 分支没有接入 sinf 判定（补丁只带了一半）", path)
+	}
+
+	// 下架 App 恢复（v2.8.1 的 sendDelistedDownload）走的是另一个 ent/download 分支，
+	// 不在上面那条判定里；漏了它，下架 App 仍可能产出无法启动的包。
+	if count := strings.Count(content, "hasDownloadFairPlayData("); count < 3 {
+		t.Errorf("%s 里 hasDownloadFairPlayData 只出现 %d 次（期望 >= 3：定义 1 + 主链路 1 + 下架恢复链路 1）", path, count)
 	}
 }
 

@@ -82,7 +82,7 @@ export default function DownloadsView({ notify }: Props) {
     const cancel = async (id: string) => {
         try {
             await DownloadService.Cancel(id);
-            notify("已请求取消（半成品 .tmp 会保留）", "info");
+            notify("已请求取消（半成品会保留）", "info");
         } catch (reason) {
             notify(errText(reason));
         }
@@ -91,13 +91,13 @@ export default function DownloadsView({ notify }: Props) {
     const retry = async (id: string) => {
         try {
             await DownloadService.Retry(id);
-            notify("已重新加入队列（会沿用已有的 .tmp 继续下载）", "info");
+            notify("已重新加入队列（会沿用已有的半成品继续下载）", "info");
         } catch (reason) {
             notify(errText(reason));
         }
     };
 
-    /** 把 .tmp 删掉、把占的空间还给磁盘（不删成品 .ipa）。 */
+    /** 把半成品（.tmp 与并行分片目录）删掉、把占的空间还给磁盘（不删成品 .ipa）。 */
     const clearPartial = async (id: string) => {
         try {
             const size = await DownloadService.PartialSize(id);
@@ -167,7 +167,7 @@ export default function DownloadsView({ notify }: Props) {
             const size = await DownloadService.PartialSize(id).catch(() => 0);
             if (size > 0) {
                 const ok = await confirmDialog(
-                    `这个任务还留着半成品 ${humanBytes(size)}（.tmp）。\n\n` +
+                    `这个任务还留着半成品 ${humanBytes(size)}（.tmp 与并行分片）。\n\n` +
                         "任务记录删掉之后，界面上就再也找不到它了，只能自己去下载目录手动删。\n\n" +
                         `「确定」= 移除任务，并把这 ${humanBytes(size)} 一起删掉；「取消」= 什么都不动。`,
                     "移除任务并删半成品",
@@ -267,7 +267,7 @@ export default function DownloadsView({ notify }: Props) {
                                 <button onClick={() => void showPartial(task.id)}>半成品</button>
                                 <button
                                     onClick={() => void clearPartial(task.id)}
-                                    title="只删 .tmp，不重新下载；删完点「续传/重试」就是从零开始"
+                                    title="只删半成品（.tmp 与并行分片），不重新下载；删完点「续传/重试」就是从零开始"
                                 >
                                     删半成品
                                 </button>
@@ -278,7 +278,7 @@ export default function DownloadsView({ notify }: Props) {
                                 <button onClick={() => void reveal(task.id)}>打开位置</button>
                                 <button
                                     onClick={() => void clearPartial(task.id)}
-                                    title="万一还留着 .tmp，顺手把空间要回来"
+                                    title="万一还留着半成品，顺手把空间要回来"
                                 >
                                     清理半成品
                                 </button>

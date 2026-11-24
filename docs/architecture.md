@@ -1,8 +1,8 @@
 # 架构设计：IPA-GUI
 
 > 状态：**Phase 1 施工图**（可开工）
-> 上游基线：[majd/ipatool](https://github.com/majd/ipatool) **v2.8.0**（MIT，2026-11-08；含本地 Anisette 认证与 Store 框架模拟）
-> 构建链接：`third_party/ipatool`（v2.8.0 + FairPlay sinf 修复），说明见 `third_party/ipatool/FORK.md`
+> 上游基线：[majd/ipatool](https://github.com/majd/ipatool) **v2.8.1**（MIT，2026-11-12）
+> 构建链接：`third_party/ipatool`（v2.8.1 + FairPlay sinf 修复），说明见 `third_party/ipatool/FORK.md`
 > 需求来源：[ipatool-gui-prd.md](./ipatool-gui-prd.md) · 调研依据：内部调研报告（未随仓库发布）
 > 目标平台：**macOS + Windows**（源码开源于 GitHub，不提供预编译包）
 
@@ -700,6 +700,8 @@ build/bin/ipagui.app/Contents/MacOS/ipa-mcp
 
 同时把登录提示改成实话：首登需要下载**十几 GB**的系统资产并本地解包，可能耗时十几分钟以上；**下载过程不保存进度**，失败要从头再来；成功后缓存在 `<UserCacheDir>/ipatool/sap/apple-assets-macos-27-26A434-arm64-v4`，之后登录才快。
 
+> **§8.26 更正**：这里的「十几 GB」是当时按恢复镜像大小估的，不准确 —— 上游只从 14 GB 镜像里**按区段读取**所需内容，镜像从不落地；真实磁盘峰值 ≈ 300 MB（解压中间产物 + 落盘缓存）。
+
 ### 8.15 2026-11-18：切换账号后已购页不刷新（缓存没有账号维度）
 
 **起因**：用户反馈「切换账号以后，已购页面没有重新刷新数据」。
@@ -929,3 +931,27 @@ Notes_1.0_何静豪.ipa                        ← 账号没有 email 时用姓�
 **测试**：`internal/ipa/naming_test.go` 的用例表补了 `account` 字段并新增 4 条 —— 中文名 + email、账号里的路径分隔符被收敛、账号用中文姓名、账号段按字符截断；`gofmt`/`go vet`/`go test ./internal/...` 全绿。预览桩的路径同步成带账号段（`frontend/preview.html`），09 用例的确认框断言随之更新；无头预览 **23/23**（截图 `/tmp/ipagui-shots-accountname3/`）。
 
 **诚实边界**：账本里的**旧记录不会改名** —— 同一次换号后重新下载会按新格式生成新文件，于是本地可能同时存在新旧两份（这正是要区分账号的代价，`已下载` 页会各列一行）。账号段用 email 时文件名偏长，窄窗口下路径会被 `shortPath` 压成 `…/`；`avoidClobber` 的 `-<appID>` 后缀仍然只在「不同 App 同名」时追加。
+
+### 8.26 2026-11-24：升级上游 ipatool 到 v2.8.1（保留 sinf 修复）
+
+**起因**：上游在 v2.8.0 之后连发 10 个 commit 并打了 `v2.8.1`（60 文件，+3961/−394）。逐文件比对确认：`go.mod`、`cmd/`、README 均未变（CLI 表面接口与依赖零变化），改动集中在下载链路、店面发现、SAP/模拟器与资产缓存。
+
+**改法**：
+- `third_party/ipatool` 基线从 `v2.8.0`（`72c47d5`）换成 **`v2.8.1`**（`3e84853`），导出方式同前（`git archive` 只带 `go.mod`/`go.sum`/`LICENSE`/`pkg`/`internal`）。
+- 本地补丁仍只有**两个文件级改动**，但 FairPlay 回退这次需要覆盖 **两条** ent 分支：
+  1. `pkg/appstore/appstore_download_product.go` 的 FairPlay 回退 —— `ent/download` 响应没带 `sinf`/`dpInfo` 时不接受，继续走 `volumeStore` → `redownload` → `updateProduct`；v2.8.1 新增的下架恢复 `sendDelistedDownload` 里那条 ent 回退也套上同一判定（无 FairPlay 数据 → 按回退失败处理）；
+  2. `internal/sap/assets/aea.go` 的 FCS key UA（防御性）。
+- `http_range.go` 的 UA 补丁**已由上游 v2.8.1（PR #653）吸收**，本地不再手改；`http_range_test.go` 与上游逐字节一致。
+- 版本常量：`internal/ipa/selftest.go` 的 `ExpectedUpstreamVersion` → `v2.8.1`、`LocalForkVersion` → `v2.8.1+sinf-fix`，`ipa_test.go` 的钉版断言注释同步。
+
+**验证**：`go mod tidy` 无 `go.sum` 变化；`go build ./...`、`go vet ./internal/... ./cmd/...`、`go test ./internal/... ./cmd/...` 全绿；`go run ./cmd/selfcheck` 报 `上游 ipatool: v2.8.1+sinf-fix` 且五项检查全部 ✓。另新增护栏测试 `internal/ipa/ipa_test.go::TestForkRetainsSinfFallback`：按符号断言 fork 里存在 `hasDownloadFairPlayData` 且 ent/download 分支确实接入了判定，防止下次整目录覆盖时补丁静默丢失。
+
+**v2.8.1 带来的行为变化与本次配套修改**：
+- >128 MB 的包会走 4 路并行 Range 下载，暂存目录为 `<目标>.ipatool-parts`。上游用 `os.Mkdir` 建它，崩溃残留会让下一次下载直接报 `failed to create download staging directory`。已处理：`internal/ipa/download.go` 新增 `partialPartsSuffix` / `removeStaleParts`（下载前清理），`PartialSize` 把 `.tmp` 与暂存目录**一起**统计，`ResetPartial` 一并删除；界面文案不再特指 `.tmp`。护栏：`download_test.go` 的 `TestPartialSizeCountsParallelParts` / `TestResetPartialRemovesPartsDirectory` / `TestDownloadClearsStalePartsDirectory`。
+- 资产缓存目录 `apple-assets-macos-27-26A434-arm64-v4` → `-v5`（v5 只是更小的 compact 表示）。已处理：确认上游会**复用已有 v4 缓存并迁移**（不重新下载），只有全新缓存才走网络；首次准备的磁盘峰值约 300 MB（解压中间产物 167 MB + 落盘 75 MB + 余量），网络量是恢复镜像里的相关区段、不是 14 GB 整包。新增 `internal/ipa/assets_cache.go`：`AssetCacheReady` 判定缓存是否就绪（只看 `apple-assets-*` 下有无非空文件，不硬编码版本号），`Session.Login` 前调 `EnsureAssetCacheSpace` 预检空间（不足直接报 `disk_full`，并说清要多少/剩多少）。护栏：`assets_cache_test.go`。
+  同次修正了登录页的错误文案：原先写「要下载十几 GB 系统资产」——实际是从镜像里按区段读、磁盘峰值约 300 MB，已改成准确表述。
+- 登录店面从硬编码表改成 `availableStorefronts` 动态发现并缓存，手机号账号登录多一次请求，失败会让登录直接失败（`failed to discover storefronts: ...`）。已处理：映射为 `CodeTemporarilyUnavailable`（可重试，提示检查网络/代理）。
+- 认证服务器返回 dialog 时错误文本变成 `消息: 解释 (Continue: https://...)`。已处理：`authDialogURLPattern` 提取 `*.apple.com` 链接，映射为新增的 `CodeActionRequired`，并优先于 `account is disabled` 等 marker（Apple 对话框文案里完全可能带这些句子）。护栏：`internal/ipa/errormap_test.go`（含「marker 文案仍在 fork 里」的上游侧断言）。
+- 新增 `sendDelistedDownload`（下架 App 恢复）在 ent 分支直接返回响应、不经过 sinf 判定。已处理：fork 的补丁扩展到这条路径（无 FairPlay 数据→按回退失败处理，错误为 `ent/download fallback returned no FairPlay data`），`TestForkRetainsSinfFallback` 改为断言两处调用（定义 1 + 主链路 1 + 下架恢复 1）。
+
+**诚实边界**：本次只做了编译/单测/自检级别的验证，**没有用真实 Apple ID 跑一次 v2.8.1 的登录与下载**；并行下载、店面发现、下架恢复三条新路径都未在真实网络下走过。资产磁盘阈值（`appleAssetPeakBytes = 300 MB`）是按上游 `fileSpec` 的 size 之和算的，不是实测峰值；缓存迁移（v4→v5）也没有在真实机器上走过一次完整流程。
