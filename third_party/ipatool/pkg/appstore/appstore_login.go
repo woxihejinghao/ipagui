@@ -209,6 +209,7 @@ func (t *appstore) login(email, password, authCode, guid, endpoint string, signe
 		}
 
 		retry, redirect, err := t.parseLoginResponse(&res, attempt, authCode, request.URL)
+		t.traceAuthenticationAttempt(res, attempt, authCode, err) // fork 补丁 4：默认关闭
 		if err != nil {
 			return Account{}, err
 		}

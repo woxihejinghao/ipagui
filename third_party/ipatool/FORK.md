@@ -7,7 +7,7 @@
 - 仓库：<https://github.com/majd/ipatool>
 - 基线：上游 `v2.8.1`（`3e84853e2e5d60540a5022b64895d496910144eb`，2026-11-12）
 - 上一版基线：`v2.8.0`（`72c47d5`，2026-11-08）
-- 本地改动只剩两处（见下）
+- 本地改动共四处（见下）
 
 v2.8.0 是一次认证链路的整体升级：新增本地 Anisette / machine provisioning
 （`internal/storeauth`）、把登录与商店请求改由模拟的 Apple Store 框架执行
@@ -63,6 +63,45 @@ read remote image range: server returned 403 Forbidden
 剩下唯一的本地改动在 `aea.go`：FCS key 请求也带上同一个 UA。实测
 `wkms-public.apple.com` 对 Go UA 也返回 200，属于本地防御性改动，**不打算上游化**。
 
+### 3. 内置 Apple Root CA 回退（`internal/storeauth/apple_root_embedded.go`、`http_client.go`）
+
+Anisette 的 machine provisioning 打的是 `https://gsa.apple.com/grandslam/MidService/…`，
+该服务端证书链的根是老的「Apple Root CA」（2006-04-25 签发、SHA-1 自签名，2035-02-09 到期），
+Windows 证书库与 Go 的 `crypto/x509` 都不认：
+
+```text
+prepare Apple authentication: install Apple provisioning root: download Apple root: HTTP 403
+```
+
+上游的补救是下载 `https://www.apple.com/appleca/AppleIncRootCertificate.cer` 再加进
+本次连接的 `RootCAs`，但**该地址现在取不到了**：2026-11-24 实测直连、
+走 HTTP 代理、换 `User-Agent` 全是 HTTP 403（`https://www.apple.com/certificateauthority/AppleRootCA.cer`
+同样 403）。于是首次登录在任何一台 Windows 机器上都会停在上面这行错误。
+
+本补丁把该证书内置（`apple_root_embedded.go`），下载失败时作为回退：
+
+- `installAppleRoot` 先照旧调用 `downloadAppleRoot`（原逻辑原样搬到独立函数）；
+- 下载报错则改用内置证书，并**仍然**过一遍上游的 `validAppleRoot`
+  （CN = `Apple Root CA`、O = `Apple Inc.`、CA:TRUE、KeyUsageCertSign、自签名、在有效期内）；
+- 内置证书的来源是 `gsa.apple.com` TLS 握手中服务端发出的链（自签名末端），
+  不是第三方镜像，SHA-1 自签名无法用 `CheckSignatureFrom` 复核，这个校验只能靠上述字段 + 来源。
+
+**不打算上游化**：上游更可能的做法是换掉这个历史根，而不是内置一份证书。
+`notBefore` 之前的场景不会触发这条路径，所以本补丁只影响「装不上根就登录不了」的环境。
+
+### 4. 认证响应追踪（`pkg/appstore/appstore_login_trace.go`、`appstore_login.go`）
+
+登录失败时上游只抛一句英文，HTTP 状态、苹果返回的 `customerMessage`、
+这一轮究竟带着哪套机器头（`X-Apple-I-MD` / `-M` / `-RINFO`）全被丢掉，
+国内网络下排查 2FA 失败无从下手。
+
+设置 `IPATOOL_AUTH_TRACE=<日志文件路径>` 后，每次认证往返往该文件追加一行 JSON
+（次数、是否带验证码、HTTP 状态、`failureType`、`customerMessage`、AMD 动作、
+`X-Dsid` 有无、机器头有无、错误文本）。**默认关闭，不设环境变量没有任何开销。**
+
+刻意不记录任何凭据：密码、验证码、`passwordToken`、cookie、机器头的值都不写，
+只写「有没有」和长度。**不打算上游化**（上游有自己的日志设施）。
+
 ## 为什么放在仓库里
 
 Go 的模块路径必须与 `go.mod` 一致。上游模块路径仍是
@@ -84,7 +123,7 @@ git archive v2.8.1 go.mod go.sum LICENSE pkg internal \
   | tar -x -C /path/to/IPA-GUI/third_party/ipatool
 ```
 
-同步后必须重放上面的补丁（两处，见「修复内容」），然后：
+同步后必须重放上面的补丁（四处，见「修复内容」），然后：
 
 ```bash
 cd /path/to/IPA-GUI
@@ -132,6 +171,7 @@ go run ./cmd/selfcheck
 ## 许可与分发
 
 本目录是 MIT 许可下的 ipatool 派生物：上游版权归 Majd Alfhaily，许可全文随上游源码保留在
-同目录的 `LICENSE`（不得删除）。本仓库对它的改动（上述 FairPlay 回退与 FCS key UA）
-同样以 MIT 授权，随本仓库整体分发。根目录 `NOTICE` 记录了完整的归属关系、补丁清单，以及
-`internal/store/profile/data_generated.go` 属于上游生成数据这一事实。
+同目录的 `LICENSE`（不得删除）。本仓库对它的改动（上述 FairPlay 回退、FCS key UA、
+内置 Apple Root CA、认证响应追踪）同样以 MIT 授权，随本仓库整体分发。根目录 `NOTICE`
+记录了完整的归属关系、补丁清单，以及 `internal/store/profile/data_generated.go`
+属于上游生成数据这一事实。

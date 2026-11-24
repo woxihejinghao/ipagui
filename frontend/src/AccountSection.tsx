@@ -119,7 +119,7 @@ export default function AccountSection({ env, auth, refresh, notify }: Props) {
                 setVerificationOpen(true);
             } else if (code) {
                 setAuthCode("");
-                setVerificationError(`本次验证未完成：${text}`);
+                setVerificationError(text.includes("验证码") ? text : `本次验证未完成：${text}`);
             } else {
                 setLoginError(text);
                 // toast 也留着：登录可能跑几分钟，用户切到别的标签页时只有 toast 能看到结果。

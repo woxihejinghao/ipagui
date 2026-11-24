@@ -40,45 +40,19 @@ func isUnknownAuthority(err error) bool {
 }
 
 func installAppleRoot(ctx context.Context, client *http.Client) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, appleRootURL, nil)
+	// 【fork 补丁 3】先按上游实现下载；拿不到就用内置的 Apple Root CA（见
+	// apple_root_embedded.go）。苹果已经在 appleRootURL 上返回 403，只靠下载会让
+	// 首次登录在这台机器上永久失败。
+	certificate, err := downloadAppleRoot(ctx)
 	if err != nil {
-		return fmt.Errorf("create Apple root request: %w", err)
+		embedded, embeddedErr := embeddedAppleRoot()
+		if embeddedErr != nil {
+			return err
+		}
+
+		certificate = embedded
 	}
 
-	downloader := &http.Client{
-		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
-		Timeout:   15 * time.Second,
-		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
-			if request.URL.Scheme != "https" || request.URL.Hostname() != "www.apple.com" {
-				return errors.New("apple root redirect is not trusted")
-			}
-
-			return nil
-		},
-	}
-
-	response, err := downloader.Do(request)
-	if err != nil {
-		return fmt.Errorf("download Apple root: %w", err)
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("download Apple root: HTTP %d", response.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(response.Body, rootSizeLimit+1))
-	if err != nil {
-		return fmt.Errorf("read Apple root: %w", err)
-	}
-	if len(data) > rootSizeLimit {
-		return errors.New("apple root exceeds size limit")
-	}
-
-	certificate, err := x509.ParseCertificate(data)
-	if err != nil {
-		return fmt.Errorf("parse Apple root: %w", err)
-	}
 	if !validAppleRoot(certificate, time.Now()) {
 		return errors.New("downloaded Apple root is invalid")
 	}
@@ -101,6 +75,52 @@ func installAppleRoot(ctx context.Context, client *http.Client) error {
 	client.Transport = updated
 
 	return nil
+}
+
+// downloadAppleRoot 是上游的原始实现：从 appleRootURL 下载根证书并做基本校验。
+// 苹果现在已经在该地址返回 403（见 apple_root_embedded.go），调用方必须能接受它失败。
+func downloadAppleRoot(ctx context.Context) (*x509.Certificate, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, appleRootURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create Apple root request: %w", err)
+	}
+
+	downloader := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}},
+		Timeout:   15 * time.Second,
+		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
+			if request.URL.Scheme != "https" || request.URL.Hostname() != "www.apple.com" {
+				return errors.New("apple root redirect is not trusted")
+			}
+
+			return nil
+		},
+	}
+
+	response, err := downloader.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("download Apple root: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download Apple root: HTTP %d", response.StatusCode)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(response.Body, rootSizeLimit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read Apple root: %w", err)
+	}
+	if len(data) > rootSizeLimit {
+		return nil, errors.New("apple root exceeds size limit")
+	}
+
+	certificate, err := x509.ParseCertificate(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse Apple root: %w", err)
+	}
+
+	return certificate, nil
 }
 
 func validAppleRoot(certificate *x509.Certificate, now time.Time) bool {

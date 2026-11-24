@@ -27,6 +27,11 @@ are documented in third_party/ipatool/FORK.md:
   1. FairPlay fallback in pkg/appstore/appstore_download_product.go
   2. Apple FCS key User-Agent fix in internal/sap/assets/aea.go
      (the restore-image User-Agent in http_range.go is upstream since v2.8.1)
+  3. Embedded Apple Root CA fallback in internal/storeauth/apple_root_embedded.go
+     and internal/storeauth/http_client.go
+  4. Opt-in authentication response tracing in
+     pkg/appstore/appstore_login_trace.go and appstore_login.go
+     (off unless IPATOOL_AUTH_TRACE is set)
 
 Generated asset data
 --------------------

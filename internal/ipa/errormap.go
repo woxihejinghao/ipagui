@@ -20,6 +20,7 @@ type Code string
 const (
 	CodeNotLoggedIn            Code = "not_logged_in"
 	CodeAuthCodeRequired       Code = "auth_code_required"
+	CodeAuthCodeRejected       Code = "auth_code_rejected"
 	CodeInvalidCredentials     Code = "invalid_credentials"
 	CodeAccountDisabled        Code = "account_disabled"
 	CodePasswordChanged        Code = "password_changed"
@@ -82,6 +83,7 @@ const (
 	markerNoUsableAuth       = "apple returned no usable authentication response"
 	// v2.8.1 起登录会动态发现店面（availableStorefronts），失败时包成这句。
 	markerStorefrontDiscovery = "failed to discover storefronts"
+	markerVerificationFailed  = "apple did not complete verification"
 )
 
 // authDialogURLPattern 从上游认证弹窗错误里提取可信链接。
@@ -205,6 +207,11 @@ func MapError(err error) *AppError {
 	case strings.Contains(text, markerPaidAppUnsupported):
 		return appErr(CodePaidAppUnsupported, "不支持购买付费应用",
 			"ipatool 只能获取免费应用或你已购内容的许可", false, err)
+
+	case strings.Contains(text, markerVerificationFailed):
+		return appErr(CodeAuthCodeRejected, "验证码没有通过",
+			"Apple 没有完成这次验证：验证码可能已过期、已经用过，或者这一轮登录耗时太久（首次登录要几十秒）。"+
+				"请重新点「登录」取得新验证码，收到后立刻输入", true, err)
 
 	case strings.Contains(text, markerBadLogin), strings.Contains(text, "invalid credentials"):
 		return appErr(CodeInvalidCredentials, "Apple ID 或密码不正确",
