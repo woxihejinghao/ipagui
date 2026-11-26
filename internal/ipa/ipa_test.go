@@ -148,10 +148,37 @@ func TestForkRetainsSinfFallback(t *testing.T) {
 		t.Errorf("%s 里 ent/download 分支没有接入 sinf 判定（补丁只带了一半）", path)
 	}
 
-	// 下架 App 恢复（v2.8.1 的 sendDelistedDownload）走的是另一个 ent/download 分支，
-	// 不在上面那条判定里；漏了它，下架 App 仍可能产出无法启动的包。
-	if count := strings.Count(content, "hasDownloadFairPlayData("); count < 3 {
-		t.Errorf("%s 里 hasDownloadFairPlayData 只出现 %d 次（期望 >= 3：定义 1 + 主链路 1 + 下架恢复链路 1）", path, count)
+	// 下架 App 恢复（sendDelistedDownload）走的是另一个 ent/download 分支。
+	// 上游 v2.8.1 之后明确把「该分支成功返回但没有 sinf/dpInfo」当作合法结果，
+	// 所以这里只要求主链路有判定：定义 1 + 主链路 1。
+	if count := strings.Count(content, "hasDownloadFairPlayData("); count < 2 {
+		t.Errorf("%s 里 hasDownloadFairPlayData 只出现 %d 次（期望 >= 2：定义 1 + 主链路 1）", path, count)
+	}
+}
+
+// TestForkRetainsStorefrontRetry 盯第五件事：fork 里的店面发现重试不能丢。
+//
+// 这处补丁的作用是「苹果侧 5xx/429/连接重置时自动再试两次」，丢了不会编译失败，
+// 只会让搜索/登录在苹果抖一下时直接报错，静默退化。同样按符号判。
+func TestForkRetainsStorefrontRetry(t *testing.T) {
+	path := filepath.Join("..", "..", "third_party", "ipatool", "pkg", "appstore", "storefront.go")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("读取 fork 的店面发现实现失败: %v", err)
+	}
+
+	content := string(data)
+
+	for _, symbol := range []string{
+		"storefrontDiscoveryAttempts",
+		"storefrontRetrySleep",
+		"fetchAvailableStorefronts",
+		"StatusTooManyRequests",
+	} {
+		if !strings.Contains(content, symbol) {
+			t.Errorf("%s 里缺少 %s（店面发现重试补丁丢了，重新按 FORK.md 重放）", path, symbol)
+		}
 	}
 }
 

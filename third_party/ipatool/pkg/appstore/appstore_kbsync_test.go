@@ -62,6 +62,7 @@ var _ = Describe("AppStore (preferred kbsync download)", func() {
 		unavailable = http.Result[downloadResult]{StatusCode: gohttp.StatusOK, Data: downloadResult{CustomerMessage: "App No Longer Available"}}
 		success = http.Result[downloadResult]{StatusCode: gohttp.StatusOK, Data: downloadResult{Items: []downloadItemResult{{
 			URL:      "https://example.com/app.ipa",
+			Sinfs:    testFairPlaySinfs(),
 			Metadata: map[string]interface{}{"itemId": int64(42), "softwareVersionExternalIdentifier": versionID, "softwareVersionBundleId": app.BundleID},
 		}}}}
 	})
@@ -142,7 +143,7 @@ var _ = Describe("AppStore (preferred kbsync download)", func() {
 			responseErr = &http.TransportError{Err: context.DeadlineExceeded}
 		case "wrong app", "wrong version", "missing URL":
 			response = http.Result[downloadResult]{StatusCode: gohttp.StatusOK, Data: downloadResult{Items: []downloadItemResult{{
-				URL: "https://example.com/wrong.ipa", Metadata: map[string]interface{}{
+				URL: "https://example.com/wrong.ipa", Sinfs: testFairPlaySinfs(), Metadata: map[string]interface{}{
 					"itemId": int64(42), "softwareVersionExternalIdentifier": versionID, "softwareVersionBundleId": app.BundleID,
 				},
 			}}}}
@@ -480,6 +481,7 @@ var _ = Describe("AppStore (preferred kbsync download)", func() {
 					return http.Result[downloadResult]{StatusCode: gohttp.StatusOK, Data: downloadResult{FailureType: FailureTypePasswordTokenExpired}}, nil
 				case "missing URL", "wrong version":
 					response := http.Result[downloadResult]{StatusCode: gohttp.StatusOK, Data: downloadResult{Items: []downloadItemResult{{
+						Sinfs:    testFairPlaySinfs(),
 						Metadata: map[string]interface{}{"itemId": app.ID, "softwareVersionExternalIdentifier": versionID, "softwareVersionBundleId": app.BundleID},
 					}}}}
 					if outcome == "wrong version" {

@@ -14,7 +14,8 @@ This directory contains a modified copy of ipatool, not an unmodified
 copy of the upstream module.
 
   Repository:  https://github.com/majd/ipatool
-  Upstream:    v2.8.1 (3e84853e2e5d60540a5022b64895d496910144eb)
+  Upstream:    main 3b02b4c55576562f2a55284cda9db9a4411d3067 (2026-11-17,
+               six commits after v2.8.1; no newer tag has been published)
   License:     MIT
   Copyright:   Copyright (c) 2021 Majd Alfhaily
 
@@ -32,6 +33,8 @@ are documented in third_party/ipatool/FORK.md:
   4. Opt-in authentication response tracing in
      pkg/appstore/appstore_login_trace.go and appstore_login.go
      (off unless IPATOOL_AUTH_TRACE is set)
+  5. Storefront discovery retry (3 attempts on 5xx/429/transport errors) in
+     pkg/appstore/storefront.go
 
 Generated asset data
 --------------------

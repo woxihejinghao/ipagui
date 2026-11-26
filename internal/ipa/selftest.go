@@ -22,8 +22,10 @@ import (
 const ExpectedUpstreamVersion = "v2.8.1"
 
 const (
-	// LocalForkVersion 是本机 fork 副本的标记（当前 = v2.8.1 基线 + 四处本地补丁：
-	// FairPlay sinf 回退、FCS key UA、内置 Apple Root CA、认证响应追踪）。
+	// LocalForkVersion 是本机 fork 副本的标记（当前 = 上游 main `3b02b4c`
+	// 基线 + 五处本地补丁：FairPlay sinf 回退、FCS key UA、内置 Apple Root CA、
+	// 认证响应追踪、店面发现重试）。上游尚未为这些提交打新 tag，go.mod 里钉的
+	// 版本号仍写 v2.8.1，所以标记也继续保持 v2.8.1 前缀。
 	// 常量值保持带 sinf-fix 的旧写法，是为了不动 docs/architecture.md 里的自检输出记录。
 	//
 	// go.mod 通过本地 replace 指向 third_party/ipatool；Go 构建信息里只能
@@ -203,7 +205,7 @@ func evaluateUpstreamVersion(version string, found bool) (Check, string) {
 
 	detail := fmt.Sprintf("%s（与预期一致）", version)
 	if version == LocalForkVersion {
-		detail = fmt.Sprintf("%s（v2.8.1 基线 + 四处本地补丁：FairPlay sinf 回退、FCS key UA、内置 Apple Root CA、认证响应追踪）", version)
+		detail = fmt.Sprintf("%s（上游 main 3b02b4c 基线 + 五处本地补丁：FairPlay sinf 回退、FCS key UA、内置 Apple Root CA、认证响应追踪、店面发现重试）", version)
 	}
 
 	return Check{

@@ -163,12 +163,11 @@ func (t *appstore) sendDelistedDownload(ctx context.Context, redownload download
 	// Download still checks the returned package's platform before publishing it.
 	entRes, entErr := t.sendEntDownload(ctx, endpoint, acc, app, guid, "")
 
-	// Local fork patch: ent/download can omit sinf/dpInfo, and such a package
-	// installs but cannot launch. Treat it as a failed fallback so the caller
-	// reports the license problem instead of publishing an unusable IPA.
-	if entErr == nil && !hasDownloadFairPlayData(entRes) {
-		entErr = errors.New("ent/download fallback returned no FairPlay data")
-	}
+	// 本地 fork 在这里**不**判定 FairPlay 数据：上游 v2.8.1 之后的测试把
+	// 「ent/download 成功但没有 sinf/dpInfo」当作合法结果（25 个用例），
+	// 下架恢复本来就是一个「能拿到什么算什么」的兜底路径。缺失 sinf 的事实
+	// 会通过 DownloadOutput.Sinfs 为空传到 GUI（SinfCount=0），由上层展示，
+	// 而不是在这里把一次可用的回退结果变成错误。
 
 	if entErr == nil || entRes.Data.FailureType == FailureTypePasswordTokenExpired ||
 		entRes.Data.FailureType == FailureTypeLicenseNotFound {

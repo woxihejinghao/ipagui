@@ -120,7 +120,9 @@ Known risks, stated plainly:
 ## Relation to upstream ipatool
 
 `third_party/ipatool/` is a modified copy of
-[majd/ipatool](https://github.com/majd/ipatool) v2.8.1, wired in via a Go
+[majd/ipatool](https://github.com/majd/ipatool) — upstream `main` at `3b02b4c`
+(six commits past `v2.8.1`, which has no newer tag yet; `go.mod` still pins
+`v2.8.1` because that is what the `replace` target reports) — wired in via a Go
 `replace` directive:
 
 ```text
@@ -133,7 +135,11 @@ Local patches are documented in
 1. a FairPlay fallback so a download never produces an IPA whose binary is
    encrypted but carries no valid `sinf`;
 2. an Apple FCS key `User-Agent` header (defensive; the restore-image
-   `User-Agent` itself ships upstream since v2.8.1).
+   `User-Agent` itself ships upstream since v2.8.1);
+3. an embedded Apple Root CA fallback for Anisette machine provisioning
+   (`www.apple.com/appleca/...` now returns HTTP 403);
+4. opt-in authentication response tracing via `IPATOOL_AUTH_TRACE`;
+5. storefront discovery retry (3 attempts on 5xx/429/transport errors).
 
 The directory contains ~6.7 MB of upstream-generated asset data
 (`internal/store/profile/data_generated.go`). It comes from upstream's pinned

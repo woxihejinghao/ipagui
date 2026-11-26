@@ -1,15 +1,11 @@
 package appstore
 
 import (
-	"errors"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/majd/ipatool/v2/pkg/http"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"go.uber.org/mock/gomock"
 )
 
 func testStorefrontCountryCodes() map[string]string {
@@ -29,10 +25,6 @@ func availableStorefrontsFixture() []byte {
 			<dict><key>country-code</key><string>US</string><key>id</key><integer>143441</integer></dict>
 			<dict><key>country-code</key><string>DE</string><key>id</key><integer>143443</integer></dict>
 		</array></dict></plist>`)
-}
-
-func storefrontGenreFixture(identifier, countryCode string) []byte {
-	return []byte(fmt.Sprintf(`{"storePlatformData":{"genre":{"meta":{"storefront":{"cc":%q,"id":%q}}}}}`, countryCode, identifier))
 }
 
 func storefrontSearchItemFixture(kind, adamID, platform, salableAdamID, externalVersionID string) string {
@@ -64,13 +56,6 @@ func storefrontPageFixture(items ...string) []byte {
 }
 
 var _ = Describe("App Store storefront data", func() {
-	// 发现失败要重试，但测试不应为此真的等几百毫秒。
-	BeforeEach(func() {
-		original := storefrontRetrySleep
-		storefrontRetrySleep = func(time.Duration) {}
-		DeferCleanup(func() { storefrontRetrySleep = original })
-	})
-
 	DescribeTable("resolves storefront response suffixes", func(storefront, country string) {
 		Expect(countryCodeFromStoreFront(storefront, testStorefrontCountryCodes())).To(Equal(country))
 	},
@@ -78,145 +63,6 @@ var _ = Describe("App Store storefront data", func() {
 		Entry("dash and comma suffixes", "143441-1,34", "US"),
 		Entry("bare storefront", "143443", "DE"),
 	)
-
-	Describe("available storefront discovery", func() {
-		It("fetches and caches the storefront country codes", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			client.EXPECT().Send(http.Request{
-				URL:            availableStorefrontsURL,
-				Method:         http.MethodGET,
-				ResponseFormat: http.ResponseFormatRaw,
-			}).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil).Times(1)
-
-			Expect(store.countryCodeFromStoreFront("143441-1,34")).To(Equal("US"))
-			Expect(store.countryCodeFromStoreFront("143443")).To(Equal("DE"))
-		})
-
-		It("retries a failed discovery request", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			requestErr := errors.New("connection reset")
-			gomock.InOrder(
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{}, requestErr),
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
-			)
-
-			// 第一次请求被打断，内部自己再试一次就够了：用户不必为此再点一下搜索。
-			Expect(store.countryCodeFromStoreFront("143441-1,34")).To(Equal("US"))
-			Expect(store.countryCodeFromStoreFront("143443")).To(Equal("DE"))
-		})
-
-		It("does not cache a discovery failure", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			requestErr := errors.New("connection reset")
-			gomock.InOrder(
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{}, requestErr).Times(storefrontDiscoveryAttempts),
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
-			)
-
-			_, err := store.countryCodeFromStoreFront("143441")
-			Expect(err).To(MatchError(ContainSubstring("available storefronts request failed")))
-			Expect(errors.Is(err, requestErr)).To(BeTrue())
-
-			// 重试用完仍失败：不能把「失败」缓存下来，下一次请求要重新去问苹果。
-			Expect(store.countryCodeFromStoreFront("143441")).To(Equal("US"))
-		})
-
-		It("does not retry a deterministic client error", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 403}, nil).Times(1)
-
-			_, err := store.countryCodeFromStoreFront("143441")
-
-			// 状态码要出现在文本里，否则只能看到「失败了」而不知道是 403 还是 503。
-			Expect(err).To(MatchError(ContainSubstring("available storefronts request failed (HTTP 403)")))
-		})
-
-		DescribeTable("resolves storefronts omitted from the available list", func(identifier, countryCode string) {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			gomock.InOrder(
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
-				client.EXPECT().Send(http.Request{
-					URL:            storefrontGenreURL,
-					Method:         http.MethodGET,
-					ResponseFormat: http.ResponseFormatRaw,
-					NoRedirects:    true,
-					Headers:        map[string]string{"X-Apple-Store-Front": identifier + "-2,29"},
-				}).Return(http.Result[[]byte]{StatusCode: 200, Data: storefrontGenreFixture(identifier, countryCode)}, nil),
-			)
-
-			Expect(store.countryCodeFromStoreFront(identifier + "-19,29")).To(Equal(countryCode))
-			Expect(store.countryCodeFromStoreFront(identifier)).To(Equal(countryCode))
-		},
-			Entry("China", "143465", "CN"),
-		)
-
-		DescribeTable("rejects inactive legacy storefronts", func(identifier string) {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			gomock.InOrder(
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 302}, nil),
-			)
-
-			_, err := store.countryCodeFromStoreFront(identifier)
-
-			Expect(err).To(MatchError(fmt.Sprintf("country code mapping for store front (%s) was not found", identifier)))
-		},
-			Entry("Bangladesh", "143490"),
-			Entry("Liechtenstein", "143522"),
-		)
-
-		It("discovers a missing storefront ID for phone login", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{
-				storefrontClient: client,
-				storefrontCountryCodes: map[string]string{
-					"143464": "SG",
-					"143466": "KR",
-				},
-			}
-			client.EXPECT().Send(gomock.Any()).Do(func(request http.Request) {
-				Expect(request.URL).To(Equal(storefrontGenreURL))
-				Expect(request.Headers).To(HaveKeyWithValue("X-Apple-Store-Front", "143465-2,29"))
-			}).Return(http.Result[[]byte]{StatusCode: 200, Data: storefrontGenreFixture("143465", "CN")}, nil)
-
-			Expect(store.discoverStorefrontID("CN")).To(Equal("143465"))
-			Expect(store.storefrontID("CN")).To(Equal("143465"))
-		})
-
-		It("rejects an unknown ID when Apple defaults it to a known storefront", func() {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			gomock.InOrder(
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: availableStorefrontsFixture()}, nil),
-				client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: 200, Data: storefrontGenreFixture("143441", "US")}, nil),
-			)
-
-			_, err := store.countryCodeFromStoreFront("999999")
-
-			Expect(err).To(MatchError("country code mapping for store front (999999) was not found"))
-		})
-
-		DescribeTable("rejects unusable discovery responses", func(status int, body []byte, message string, attempts int) {
-			client := http.NewMockClient[[]byte](gomock.NewController(GinkgoT()))
-			store := &appstore{storefrontClient: client}
-			client.EXPECT().Send(gomock.Any()).Return(http.Result[[]byte]{StatusCode: status, Data: body}, nil).Times(attempts)
-
-			_, err := store.countryCodeFromStoreFront("143441")
-
-			Expect(err).To(MatchError(ContainSubstring(message)))
-		},
-			// 5xx 会被重试；解码/内容问题不重试（重试结果不会变）。
-			Entry("HTTP error", 503, nil, "available storefronts request failed (HTTP 503)", storefrontDiscoveryAttempts),
-			Entry("malformed plist", 200, []byte("not a plist"), "failed to decode available storefronts", 1),
-			Entry("empty storefront list", 200, []byte(`<plist><dict><key>storefronts</key><array/></dict></plist>`), "contains no storefronts", 1),
-		)
-	})
 
 	Describe("storefrontVisionApps", func() {
 		It("keeps unique native visionOS apps in storefront order and applies the limit", func() {

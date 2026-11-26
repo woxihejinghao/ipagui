@@ -110,8 +110,9 @@ var assets embed.FS
 
 ## 与上游 ipatool 的关系
 
-`third_party/ipatool/` 是 [majd/ipatool](https://github.com/majd/ipatool) v2.8.1 的
-修改副本，通过 Go 的 `replace` 指令接入：
+`third_party/ipatool/` 是 [majd/ipatool](https://github.com/majd/ipatool) 上游 `main`
+（`3b02b4c`，即 `v2.8.1` 之后 6 个 commit；上游尚未发新 tag，`go.mod` 里钉的版本仍写
+`v2.8.1`）的修改副本，通过 Go 的 `replace` 指令接入：
 
 ```text
 replace github.com/majd/ipatool/v2 => ./third_party/ipatool
@@ -120,7 +121,10 @@ replace github.com/majd/ipatool/v2 => ./third_party/ipatool
 本地补丁记录在 [`third_party/ipatool/FORK.md`](third_party/ipatool/FORK.md)：
 
 1. FairPlay 回退 —— 避免产出「二进制已加密但没有有效 `sinf`」的 IPA；
-2. Apple FCS key 的 `User-Agent`（防御性；镜像下载的 UA 自 v2.8.1 起已由上游提供）。
+2. Apple FCS key 的 `User-Agent`（防御性；镜像下载的 UA 自 v2.8.1 起已由上游提供）；
+3. 内置 Apple Root CA 回退（Anisette machine provisioning 的根证书下载地址现在返 403）；
+4. 认证响应追踪 —— 设 `IPATOOL_AUTH_TRACE` 才开，默认零开销；
+5. 店面发现重试 —— 网络错误 / 429 / 5xx 自动再试两次。
 
 该目录还包含约 6.7 MB 的上游生成数据
 （`internal/store/profile/data_generated.go`）。它来自上游的钉版输入，不是本项目生成的 ——

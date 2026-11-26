@@ -1,8 +1,8 @@
 # 架构设计：IPA-GUI
 
 > 状态：**Phase 1 施工图**（可开工）
-> 上游基线：[majd/ipatool](https://github.com/majd/ipatool) **v2.8.1**（MIT，2026-11-12）
-> 构建链接：`third_party/ipatool`（v2.8.1 + FairPlay sinf 修复），说明见 `third_party/ipatool/FORK.md`
+> 上游基线：[majd/ipatool](https://github.com/majd/ipatool) **main `3b02b4c`**（MIT，2026-11-17；最新 tag 仍为 v2.8.1）
+> 构建链接：`third_party/ipatool`（main `3b02b4c` + 五处本地补丁），说明见 `third_party/ipatool/FORK.md`
 > 需求来源：[ipatool-gui-prd.md](./ipatool-gui-prd.md) · 调研依据：内部调研报告（未随仓库发布）
 > 目标平台：**macOS + Windows**（源码开源于 GitHub，不提供预编译包）
 
@@ -957,3 +957,19 @@ Notes_1.0_何静豪.ipa                        ← 账号没有 email 时用姓�
 - 新增 `sendDelistedDownload`（下架 App 恢复）在 ent 分支直接返回响应、不经过 sinf 判定。已处理：fork 的补丁扩展到这条路径（无 FairPlay 数据→按回退失败处理，错误为 `ent/download fallback returned no FairPlay data`），`TestForkRetainsSinfFallback` 改为断言两处调用（定义 1 + 主链路 1 + 下架恢复 1）。
 
 **诚实边界**：本次只做了编译/单测/自检级别的验证，**没有用真实 Apple ID 跑一次 v2.8.1 的登录与下载**；并行下载、店面发现、下架恢复三条新路径都未在真实网络下走过。资产磁盘阈值（`appleAssetPeakBytes = 300 MB`）是按上游 `fileSpec` 的 size 之和算的，不是实测峰值；缓存迁移（v4→v5）也没有在真实机器上走过一次完整流程。
+
+### 8.27 2026-11-26：同步上游 ipatool `main`（3b02b4c）并推送
+
+**起因**：上游 v2.8.1 之后 `main` 又落了 6 个 commit（31 文件，+2293/−349，`go.mod` 未变），且**没有新 tag**。其中 3 个直接打在购买/店面路径上，对我们这种「登录 → 搜索 → 购买/下载」的闭环影响最大：购买时恢复账号 storefront（`5a6dfe0`）、购买时接受 Apple 更新的条款（`d69faf8`）、storefront 改为从「带作用域的 bag」解析（`3b02b4c`）。
+
+**改法**：
+- `third_party/ipatool` 基线从 `v2.8.1`（`3e84853`）换成 `main` 的 **`3b02b4c`**，导出方式同前（`git archive` 只带 `go.mod`/`go.sum`/`LICENSE`/`pkg`/`internal`）。
+- 五处本地补丁的落点复检：`aea.go`（FCS key UA）、`storeauth/http_client.go` + `apple_root_embedded.go`（内置 Apple Root CA）、`appstore_login_trace.go` + `appstore_login.go`（认证追踪，上游动了这个文件，补丁按新上下文重放）、`appstore_download_product.go`（FairPlay 回退，上游未动）全部重放成功；`storefront.go` 的店面发现重试因上游大改而改写落点（硬编码 URL 常量 → bag 广告的 `discoverAvailableStorefronts(endpoint)`），见 `FORK.md`「修复内容 5」。
+- **撤掉一处更严格的判定**：v2.8.1 时期 fork 在下架恢复 `sendDelistedDownload` 里也会因「ent 响应没有 FairPlay 数据」报错。上游把这种情况当合法成功（`appstore_kbsync_test.go` / `appstore_delisted_download_test.go` 里 25 个用例如此期望，下架恢复本就是「能拿到什么算什么」的兜底），因此本次撤掉该报错：缺 sinf 的事实通过 `DownloadOutput.Sinfs` 为空传给 GUI（`SinfCount = 0`），不再把可用兜底变成错误。`TestForkRetainsSinfFallback` 的断言从「>= 3 处」改为「>= 2 处」。
+- 上游测试 fixture 与 FairPlay 补丁冲突：把「成功但无 sinf」当合法成功，与补丁「无 sinf 就回退」互斥，`go test ./pkg/appstore` 会多出期望之外的请求。本地在 `appstore_kbsync_test.go` 的三处成功 fixture 上补了 `Sinfs: testFairPlaySinfs()`（辅助函数放在新增的 `pkg/appstore/fork_helpers_test.go`），表达「真实成功响应带 sinf」。
+- 新增护栏 `internal/ipa/ipa_test.go::TestForkRetainsStorefrontRetry`：按符号断言 `storefrontDiscoveryAttempts` / `storefrontRetrySleep` / `fetchAvailableStorefronts` / `StatusTooManyRequests` 都在，防止下次整目录覆盖时第 5 处补丁静默丢失。
+- 版本常量保持 `v2.8.1+sinf-fix`（上游没打新 tag，`go.mod` 里钉的仍是 v2.8.1），只更新注释与自检 detail 文案。
+
+**验证**：`go build ./...`、`go vet ./internal/... ./cmd/...`、`go test ./internal/... ./cmd/...` 全绿；`go run ./cmd/selfcheck` 五项全 ✓；fork 侧把目录复制到临时位置跑 `go generate ./pkg/...` 生成上游 mock 后，`go test ./...` 17 个包全绿（含 994 个 appstore spec）。
+
+**诚实边界**：仍未用真实 Apple ID 跑一次登录/购买/下载；「接受更新条款」与「bag 作用域 storefront」两条新路径只过了上游单测，没有在真实账号上走过。
